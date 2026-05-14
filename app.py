@@ -1,100 +1,127 @@
 import streamlit as st
+import pdfplumber
+import pytesseract
+from PIL import Image
+import io
 
 st.set_page_config(page_title="Raio-X PPP - PróBenefício", layout="wide")
 
 st.title("📄 Raio-X do PPP - PróBenefício")
-
 st.write("Faça o upload do PPP para análise completa.")
 
 uploaded_file = st.file_uploader("Carregue o PDF do PPP", type=["pdf"])
 
+# =========================
+# FUNÇÃO OCR + TEXTO
+# =========================
+def extrair_texto_pdf(file):
+    texto_total = ""
+
+    try:
+        with pdfplumber.open(file) as pdf:
+            for pagina in pdf.pages:
+                texto = pagina.extract_text()
+                if texto:
+                    texto_total += texto + "\n"
+                else:
+                    imagem = pagina.to_image(resolution=300)
+                    pil_img = imagem.original
+                    texto_ocr = pytesseract.image_to_string(pil_img, lang="por")
+                    texto_total += texto_ocr + "\n"
+    except:
+        texto_total = "Erro ao processar o PDF."
+
+    return texto_total.lower()
+
+
+# =========================
+# ANÁLISE INTELIGENTE
+# =========================
+def analisar_ppp(texto):
+
+    resultado = []
+
+    # 🔊 RUÍDO
+    if "ruído" in texto or "db" in texto:
+        resultado.append("🔊 Agente físico RUÍDO identificado.")
+
+        if "85" in texto or "86" in texto or "87" in texto:
+            resultado.append("⚠️ Possível exposição acima de 85 dB → atividade especial após 2003.")
+
+    # ☣️ QUÍMICOS
+    if "hidrocarboneto" in texto or "óleo" in texto or "graxa" in texto:
+        resultado.append("☣️ Agente químico identificado → potencial insalubridade.")
+
+    # 🦠 BIOLÓGICOS
+    if "vírus" in texto or "bactéria" in texto or "hospital" in texto:
+        resultado.append("🦠 Agente biológico identificado → enquadramento especial provável.")
+
+    # 🦺 EPI
+    if "epi" in texto:
+        if "eficaz" in texto:
+            resultado.append("🦺 EPI declarado eficaz (necessita validação jurídica).")
+        else:
+            resultado.append("⚠️ EPI sem comprovação de eficácia.")
+
+    else:
+        resultado.append("❌ Ausência de informação sobre EPI.")
+
+    # 📋 RESPONSÁVEL TÉCNICO
+    if "engenheiro" not in texto and "médico do trabalho" not in texto:
+        resultado.append("❌ Ausência de responsável técnico → PPP inválido juridicamente.")
+
+    # 📊 LTCAT
+    if "ltcat" not in texto:
+        resultado.append("⚠️ LTCAT não identificado.")
+
+    return resultado
+
+
+# =========================
+# GERA RELATÓRIO
+# =========================
+def gerar_relatorio(analise):
+
+    relatorio = "📊 ANÁLISE TÉCNICA E JURÍDICA DO PPP\n\n"
+
+    relatorio += "Base legal: Lei 8.213/91 (art. 57 e 58), Decreto 3.048/99 e normas regulamentadoras.\n\n"
+
+    relatorio += "━━━━━━━━━━━━━━━━━━━━━━\n"
+    relatorio += "🔎 RESULTADOS ENCONTRADOS\n"
+    relatorio += "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+    for item in analise:
+        relatorio += f"- {item}\n"
+
+    relatorio += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    relatorio += "⚖️ CONCLUSÃO JURÍDICA\n"
+    relatorio += "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+    if any("RUÍDO" in i for i in analise) or any("químico" in i.lower() for i in analise):
+        relatorio += "👉 Há fortes indícios de atividade especial.\n"
+    else:
+        relatorio += "👉 Não foram identificados elementos suficientes de especialidade.\n"
+
+    relatorio += "\n📌 O PPP pode ser contestado judicialmente em caso de inconsistências.\n"
+
+    return relatorio
+
+
+# =========================
+# EXECUÇÃO
+# =========================
 if uploaded_file:
+
     st.success("Arquivo carregado com sucesso!")
 
-    texto_exemplo = f"""
-📊 ANÁLISE TÉCNICA E JURÍDICA DO PPP
+    with st.spinner("Analisando PPP..."):
 
-O Perfil Profissiográfico Previdenciário (PPP) foi analisado à luz da legislação previdenciária vigente, com base no art. 58 da Lei 8.213/91, Decreto 3.048/99 e normas regulamentadoras aplicáveis.
+        texto = extrair_texto_pdf(uploaded_file)
 
-━━━━━━━━━━━━━━━━━━━━━━
-🔎 1. AGENTES NOCIVOS
-━━━━━━━━━━━━━━━━━━━━━━
+        analise = analisar_ppp(texto)
 
-Foi realizada a verificação da presença de agentes físicos, químicos e biológicos conforme Anexo IV do Decreto 3.048/99.
-
-A legislação previdenciária estabelece que:
-
-➡️ A exposição habitual e permanente a agentes nocivos à saúde ou à integridade física do trabalhador enseja o reconhecimento de tempo especial.
-
-━━━━━━━━━━━━━━━━━━━━━━
-🔊 2. RUÍDO
-━━━━━━━━━━━━━━━━━━━━━━
-
-Limites legais:
-
-- Até 05/03/1997: superior a 80 dB  
-- De 06/03/1997 a 18/11/2003: superior a 90 dB  
-- Após 19/11/2003: superior a 85 dB  
-
-📌 Base legal: Decreto 2.172/97 e Decreto 4.882/03
-
-⚠️ O uso de EPI não descaracteriza automaticamente o direito ao enquadramento especial.
-
-━━━━━━━━━━━━━━━━━━━━━━
-🦺 3. EPI
-━━━━━━━━━━━━━━━━━━━━━━
-
-Nos termos do art. 58, §2º da Lei 8.213/91:
-
-A empresa deve comprovar a real eficácia do EPI.
-
-Falhas comuns:
-
-- Ausência de CA  
-- Informação genérica  
-- Falta de comprovação de eficácia  
-
-━━━━━━━━━━━━━━━━━━━━━━
-⚖️ 4. CONCLUSÃO
-━━━━━━━━━━━━━━━━━━━━━━
-
-Há indícios de enquadramento como atividade especial.
-
-Falhas no PPP podem ser corrigidas judicialmente.
-
-📌 O direito deve ser interpretado de forma favorável ao segurado.
-
-🚀 Recomendação: análise aprofundada e possível ação judicial.
-"""
-
-    - Verificação de agentes nocivos
-    - Análise de ruído conforme NR-15 e Decreto 3.048/99
-    - Verificação de EPI
-    - Identificação de falhas técnicas
-
-    POSSÍVEIS FALHAS:
-    - Ausência de responsável técnico
-    - Falta de metodologia de medição
-    - PPP incompleto quanto ao EPI
-
-    FUNDAMENTAÇÃO LEGAL:
-
-    Decreto 3.048/99:
-    Art. 68: A comprovação da efetiva exposição do segurado aos agentes nocivos será feita mediante formulário PPP emitido pela empresa com base em laudo técnico.
-
-    Lei 8.213/91:
-    Art. 57: A aposentadoria especial será devida ao segurado que tiver trabalhado sujeito a condições especiais que prejudiquem a saúde ou integridade física.
-
-    CONCLUSÃO:
-    Há indícios de irregularidades que podem ensejar reconhecimento de tempo especial.
-    """
+        relatorio = gerar_relatorio(analise)
 
     st.subheader("📊 Resultado da Análise")
-    st.text_area("Relatório", texto_exemplo, height=400)
 
-    st.download_button(
-        label="📥 Baixar relatório",
-        data=texto_exemplo,
-        file_name="relatorio_ppp.txt",
-        mime="text/plain"
-    )
+    st.text_area("Relatório", relatorio, height=400)
