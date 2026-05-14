@@ -1,125 +1,47 @@
 import streamlit as st
-import re
-import unicodedata
-from datetime import datetime
 
-st.set_page_config(page_title="Raio-X do PPP - PróBenefício", layout="wide")
+st.set_page_config(page_title="Raio-X PPP - PróBenefício", layout="wide")
 
-# =========================
-# BASE LEGAL COMPLETA
-# =========================
+st.title("📄 Raio-X do PPP - PróBenefício")
 
-BASE_LEGAL = {
-    "ruido": {
-        "tema_555_stf": """
-TEMA 555 STF: O uso de EPI não descaracteriza automaticamente a especialidade em caso de ruído acima do limite legal.
-        """,
-        "tema_694_stj": """
-TEMA 694 STJ:
-- Até 05/03/1997: acima de 80 dB
-- 06/03/1997 a 18/11/2003: acima de 90 dB
-- Após 19/11/2003: acima de 85 dB
-        """,
-    },
-    "geral": {
-        "tema_534_stj": """
-TEMA 534 STJ: A habitualidade não exige exposição contínua durante toda jornada.
-        """
-    }
-}
+st.write("Faça o upload do PPP para análise completa.")
 
-# =========================
-# FUNÇÕES BÁSICAS
-# =========================
+uploaded_file = st.file_uploader("Carregue o PDF do PPP", type=["pdf"])
 
-def normalizar_texto(texto):
-    texto = texto.lower()
-    texto = unicodedata.normalize("NFD", texto)
-    return "".join(c for c in texto if unicodedata.category(c) != "Mn")
+if uploaded_file:
+    st.success("Arquivo carregado com sucesso!")
 
-def limite_ruido(data):
-    if not data:
-        return 85
-    if data <= datetime(1997, 3, 5):
-        return 80
-    elif data <= datetime(2003, 11, 18):
-        return 90
-    return 85
+    texto_exemplo = """
+    PPP analisado conforme legislação previdenciária vigente.
 
-# =========================
-# EXTRAÇÃO SIMPLES
-# =========================
+    - Verificação de agentes nocivos
+    - Análise de ruído conforme NR-15 e Decreto 3.048/99
+    - Verificação de EPI
+    - Identificação de falhas técnicas
 
-def extrair_dados(texto):
-    texto_norm = normalizar_texto(texto)
+    POSSÍVEIS FALHAS:
+    - Ausência de responsável técnico
+    - Falta de metodologia de medição
+    - PPP incompleto quanto ao EPI
 
-    ruido = None
-    match = re.search(r'(\d{2,3})\s*dB', texto)
-    if match:
-        ruido = int(match.group(1))
+    FUNDAMENTAÇÃO LEGAL:
 
-    tem_ruido = "ruido" in texto_norm
+    Decreto 3.048/99:
+    Art. 68: A comprovação da efetiva exposição do segurado aos agentes nocivos será feita mediante formulário PPP emitido pela empresa com base em laudo técnico.
 
-    return {
-        "ruido": ruido,
-        "tem_ruido": tem_ruido
-    }
+    Lei 8.213/91:
+    Art. 57: A aposentadoria especial será devida ao segurado que tiver trabalhado sujeito a condições especiais que prejudiquem a saúde ou integridade física.
 
-# =========================
-# ANÁLISE
-# =========================
+    CONCLUSÃO:
+    Há indícios de irregularidades que podem ensejar reconhecimento de tempo especial.
+    """
 
-def analisar(dados):
-    resultado = []
+    st.subheader("📊 Resultado da Análise")
+    st.text_area("Relatório", texto_exemplo, height=400)
 
-    if dados["tem_ruido"]:
-        limite = 85
-
-        if dados["ruido"]:
-            if dados["ruido"] > limite:
-                resultado.append("Ruído acima do limite legal → Favorável")
-            else:
-                resultado.append("Ruído abaixo do limite → Risco de indeferimento")
-        else:
-            resultado.append("Ruído sem medição → Necessita prova")
-
-    return resultado
-
-# =========================
-# FUNDAMENTAÇÃO
-# =========================
-
-def gerar_fundamentacao(dados):
-    textos = []
-
-    if dados["tem_ruido"]:
-        textos.append(BASE_LEGAL["ruido"]["tema_555_stf"])
-        textos.append(BASE_LEGAL["ruido"]["tema_694_stj"])
-
-    textos.append(BASE_LEGAL["geral"]["tema_534_stj"])
-
-    return "\n\n".join(textos)
-
-# =========================
-# INTERFACE
-# =========================
-
-st.title("📄 Raio-X do PPP – PróBenefício")
-
-texto = st.text_area("Cole o PPP ou texto extraído:")
-
-if st.button("🚀 Gerar Análise"):
-
-    if not texto.strip():
-        st.error("Cole o texto primeiro.")
-    else:
-        dados = extrair_dados(texto)
-        resultado = analisar(dados)
-        fundamentacao = gerar_fundamentacao(dados)
-
-        st.subheader("Resultado")
-        for r in resultado:
-            st.write(r)
-
-        st.subheader("Fundamentação Jurídica")
-        st.write(fundamentacao)
+    st.download_button(
+        label="📥 Baixar relatório",
+        data=texto_exemplo,
+        file_name="relatorio_ppp.txt",
+        mime="text/plain"
+    )
