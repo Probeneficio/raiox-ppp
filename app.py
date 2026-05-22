@@ -144,6 +144,30 @@ BASE_LEGAL = {
             "Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante."
         ),
     },
+    "fumos_metalicos": {
+        "grupo": "Químico",
+        "termos": ["fumos metalicos", "fumos metálicos", "fumo metalico", "fumo metálico", "ferro", "manganes", "manganês", "silicio", "silício", "solda", "soldagem"],
+        "norma": "NR-15 Anexos 11, 12 e 13, conforme substância e forma de exposição",
+        "limite": "Avaliação conforme substância: quantitativa quando houver limite de tolerância; qualitativa quando aplicável",
+        "metodologia": "Laudo técnico/LTCAT com identificação da substância, forma de contato, concentração quando exigível e método de avaliação",
+        "fundamento": BASE_LEGAL["quimicos"]["nr15_11_12_13"] + " " + BASE_LEGAL["quimicos"]["tema_1083_stj"]
+    },
+    "poeiras": {
+        "grupo": "Químico",
+        "termos": ["poeira respiravel", "poeira respirável", "poeira total", "poeiras", "poeira"],
+        "norma": "NR-15 Anexo 12 e normas técnicas de higiene ocupacional aplicáveis",
+        "limite": "Avaliação quantitativa ou qualitativa conforme composição da poeira e presença de sílica livre cristalizada",
+        "metodologia": "Amostragem ambiental, identificação da fração respirável/total e metodologia técnica compatível",
+        "fundamento": BASE_LEGAL["quimicos"]["nr15_11_12_13"] + " " + BASE_LEGAL["quimicos"]["linach"]
+    },
+    "oleos_minerais": {
+        "grupo": "Químico",
+        "termos": ["oleos minerais", "óleos minerais", "oleo mineral", "óleo mineral", "hidrocarboneto", "hidrocarbonetos", "graxa", "lubrificante"],
+        "norma": "NR-15 Anexo 13",
+        "limite": "Avaliação qualitativa quando caracterizado contato habitual e permanente",
+        "metodologia": "Laudo qualitativo com descrição da forma de contato e habitualidade",
+        "fundamento": BASE_LEGAL["quimicos"]["nr15_11_12_13"] + " " + BASE_LEGAL["epi"]["irdr15_trf4"]
+    },
     "biologicos": {
         "nr15_14": (
             "NR-15, Anexo 14: agentes biológicos são avaliados qualitativamente, considerando risco de contato "
@@ -411,6 +435,30 @@ AGENTES = {
         "metodologia": "Laudo qualitativo",
         "fundamento": BASE_LEGAL["quimicos"]["linach"]
     },
+    "fumos_metalicos": {
+        "grupo": "Químico",
+        "termos": ["fumos metalicos", "fumos metálicos", "fumo metalico", "fumo metálico", "ferro", "manganes", "manganês", "silicio", "silício", "solda", "soldagem"],
+        "norma": "NR-15 Anexos 11, 12 e 13, conforme substância e forma de exposição",
+        "limite": "Avaliação conforme substância: quantitativa quando houver limite de tolerância; qualitativa quando aplicável",
+        "metodologia": "Laudo técnico/LTCAT com identificação da substância, forma de contato, concentração quando exigível e método de avaliação",
+        "fundamento": BASE_LEGAL["quimicos"]["nr15_11_12_13"] + " " + BASE_LEGAL["quimicos"]["tema_1083_stj"]
+    },
+    "poeiras": {
+        "grupo": "Químico",
+        "termos": ["poeira respiravel", "poeira respirável", "poeira total", "poeiras", "poeira"],
+        "norma": "NR-15 Anexo 12 e normas técnicas de higiene ocupacional aplicáveis",
+        "limite": "Avaliação quantitativa ou qualitativa conforme composição da poeira e presença de sílica livre cristalizada",
+        "metodologia": "Amostragem ambiental, identificação da fração respirável/total e metodologia técnica compatível",
+        "fundamento": BASE_LEGAL["quimicos"]["nr15_11_12_13"] + " " + BASE_LEGAL["quimicos"]["linach"]
+    },
+    "oleos_minerais": {
+        "grupo": "Químico",
+        "termos": ["oleos minerais", "óleos minerais", "oleo mineral", "óleo mineral", "hidrocarboneto", "hidrocarbonetos", "graxa", "lubrificante"],
+        "norma": "NR-15 Anexo 13",
+        "limite": "Avaliação qualitativa quando caracterizado contato habitual e permanente",
+        "metodologia": "Laudo qualitativo com descrição da forma de contato e habitualidade",
+        "fundamento": BASE_LEGAL["quimicos"]["nr15_11_12_13"] + " " + BASE_LEGAL["epi"]["irdr15_trf4"]
+    },
     "biologicos": {
         "grupo": "Biológico",
         "termos": ["biologico", "biológico", "virus", "vírus", "bacteria", "bactéria", "fungo", "hospital", "paciente", "sangue", "secrecao", "secreção", "laboratorio", "laboratório", "lixo urbano", "esgoto", "material infectocontagiante"],
@@ -492,21 +540,27 @@ def extrair_ruidos(texto):
 
 def extrair_cnae(texto):
     """
-    Extrai CNAE no formato usual do PPP:
-    2829-1/99, 28291/99, 2829199, ou próximo da palavra CNAE.
+    Extrai apenas o código CNAE do PPP.
+    Não faz análise do CNAE. Apenas localiza e exibe o código.
+    Aceita formatos comuns e erros leves de OCR:
+    2829-1/99, 28291/99, 2829199, 2829 1 99.
     """
+    texto_original = texto or ""
+    texto_limpo = re.sub(r"[–—]", "-", texto_original)
+
     padroes = [
-        r"(?:3\s*)?CNAE\s*[:\-]?\s*([0-9]{4}[-\.]?[0-9]/?[0-9]{2})",
-        r"CNAE[^0-9]{0,20}([0-9]{4}[-\.]?[0-9]/?[0-9]{2})",
-        r"\b([0-9]{4}-[0-9]/[0-9]{2})\b",
-        r"\b([0-9]{4}[0-9]/[0-9]{2})\b",
+        r"(?:3\s*)?CNAE\s*[:\-]?\s*([0-9]{4}\s*[-]?\s*[0-9]\s*/\s*[0-9]{2})",
+        r"CNAE[^0-9]{0,40}([0-9]{4}\s*[-]?\s*[0-9]\s*/\s*[0-9]{2})",
+        r"\b([0-9]{4}\s*-\s*[0-9]\s*/\s*[0-9]{2})\b",
+        r"\b([0-9]{5}\s*/\s*[0-9]{2})\b",
         r"\b([0-9]{7})\b",
+        r"\b([0-9]{4}\s+[0-9]\s+[0-9]{2})\b",
     ]
 
     for p in padroes:
-        m = re.search(p, texto, flags=re.IGNORECASE)
+        m = re.search(p, texto_limpo, flags=re.IGNORECASE)
         if m:
-            bruto = m.group(1).strip()
+            bruto = m.group(1)
             return normalizar_codigo_cnae(bruto)
 
     return ""
@@ -514,19 +568,18 @@ def extrair_cnae(texto):
 
 def normalizar_codigo_cnae(cnae):
     """
-    Normaliza o CNAE para dois formatos:
-    - formatado: 2829-1/99
-    - numerico: 2829199
+    Retorna CNAE formatado como 0000-0/00 sempre que possível.
     """
     if not cnae:
         return ""
 
-    digitos = re.sub(r"\D", "", cnae)
+    digitos = re.sub(r"\D", "", str(cnae))
 
-    if len(digitos) == 7:
+    if len(digitos) >= 7:
+        digitos = digitos[:7]
         return f"{digitos[0:4]}-{digitos[4]}/{digitos[5:7]}"
 
-    return cnae
+    return str(cnae).strip()
 
 
 def cnae_para_ibge(cnae):
@@ -885,6 +938,14 @@ def analisar_agentes(texto):
                 else:
                     item["enquadramento"] = "Ruído mencionado, mas sem intensidade numérica clara. Falha crítica no campo 15.4."
 
+            if info.get("grupo", "").lower().startswith("químico") or info.get("grupo", "").lower().startswith("quimico"):
+                item["enquadramento"] = (
+                    "Agente químico identificado no PPP. Deve ser analisado conforme a natureza do agente: "
+                    "quando quantitativo, exige concentração/metodologia; quando qualitativo, a exposição habitual "
+                    "e permanente pode ser suficiente. A simples indicação de EPI eficaz não afasta automaticamente "
+                    "a especialidade sem prova concreta de neutralização."
+                )
+
             agentes.append(item)
 
     return agentes
@@ -935,6 +996,18 @@ def analisar_epi(texto, agentes):
                 "analise": "Para agentes biológicos, o EPI não afasta automaticamente a especialidade, dada a natureza qualitativa do risco.",
                 "fundamento": BASE_LEGAL["biologicos"]["tema_211_tnu"] + " " + BASE_LEGAL["biologicos"]["irdr15"],
                 "estrategia": "Defender risco ocupacional qualitativo e solicitar prova complementar se necessário."
+            })
+        elif "quim" in grupo:
+            conclusoes.append({
+                "criticidade": "GRAVE" if tem_eficaz else "CRÍTICA",
+                "ponto": f"EPI x agente químico ({agente})",
+                "analise": (
+                    "Para agente químico, a eficácia do EPI exige prova concreta: CA adequado ao agente, "
+                    "validade, fornecimento, treinamento, troca, higienização, fiscalização e compatibilidade "
+                    "com a forma de exposição. A mera marcação de EPI eficaz no PPP não encerra a análise."
+                ),
+                "fundamento": BASE_LEGAL["quimicos"]["tema_1083_stj"] + " " + BASE_LEGAL["epi"]["tema_213_tnu"] + " " + BASE_LEGAL["epi"]["nr06"],
+                "estrategia": "Conferir CA, campo 15.9 e LTCAT. Se houver omissão, impugnar a neutralização do agente químico."
             })
         else:
             conclusoes.append({
