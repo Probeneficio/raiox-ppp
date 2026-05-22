@@ -146,27 +146,35 @@ BASE_LEGAL = {
     },
     "fumos_metalicos": {
         "grupo": "Químico",
-        "termos": ["fumos metalicos", "fumos metálicos", "fumo metalico", "fumo metálico", "ferro", "manganes", "manganês", "silicio", "silício", "solda", "soldagem"],
+        "termos": [
+            "fumos metalicos", "fumos metálicos", "fumo metalico", "fumo metálico",
+            "ferro", "manganes", "manganês", "silicio", "silício", "solda", "soldagem"
+        ],
         "norma": "NR-15 Anexos 11, 12 e 13, conforme substância e forma de exposição",
         "limite": "Avaliação conforme substância: quantitativa quando houver limite de tolerância; qualitativa quando aplicável",
-        "metodologia": "Laudo técnico/LTCAT com identificação da substância, forma de contato, concentração quando exigível e método de avaliação",
-        "fundamento": 'NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante.' + " " + 'Para agentes químicos, a simples indicação de EPI eficaz no PPP não afasta automaticamente a especialidade. É necessária análise concreta da efetiva neutralização, considerando concentração, forma de contato, metodologia, CA, treinamento, troca, fiscalização e compatibilidade do EPI.'
+        "metodologia": "LTCAT/laudo técnico com identificação da substância, forma de contato, concentração quando exigível e método de avaliação",
+        "fundamento": FUNDAMENTO_QUIMICOS_GERAL
     },
     "poeiras": {
         "grupo": "Químico",
-        "termos": ["poeira respiravel", "poeira respirável", "poeira total", "poeiras", "poeira"],
+        "termos": [
+            "poeira respiravel", "poeira respirável", "poeira total", "poeiras", "poeira"
+        ],
         "norma": "NR-15 Anexo 12 e normas técnicas de higiene ocupacional aplicáveis",
         "limite": "Avaliação quantitativa ou qualitativa conforme composição da poeira e presença de sílica livre cristalizada",
         "metodologia": "Amostragem ambiental, identificação da fração respirável/total e metodologia técnica compatível",
-        "fundamento": 'NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante.' + " " + 'Agentes cancerígenos LINACH — Portaria Interministerial 09/2014: a análise tende a ser qualitativa. O art. 68, §4º, do Decreto 3.048/99 reforça que a avaliação de agentes reconhecidamente cancerígenos não se resolve pela simples declaração de EPI eficaz.'
+        "fundamento": FUNDAMENTO_QUIMICOS_POEIRAS
     },
     "oleos_minerais": {
         "grupo": "Químico",
-        "termos": ["oleos minerais", "óleos minerais", "oleo mineral", "óleo mineral", "hidrocarboneto", "hidrocarbonetos", "graxa", "lubrificante"],
+        "termos": [
+            "oleos minerais", "óleos minerais", "oleo mineral", "óleo mineral",
+            "hidrocarboneto", "hidrocarbonetos", "graxa", "lubrificante"
+        ],
         "norma": "NR-15 Anexo 13",
         "limite": "Avaliação qualitativa quando caracterizado contato habitual e permanente",
         "metodologia": "Laudo qualitativo com descrição da forma de contato e habitualidade",
-        "fundamento": 'NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante.' + " " + BASE_LEGAL["epi"]["irdr15_trf4"]
+        "fundamento": FUNDAMENTO_QUIMICOS_OLEOS
     },
     "biologicos": {
         "nr15_14": (
@@ -399,6 +407,25 @@ BASE_LEGAL["quimicos"].setdefault(
     "não se resolve pela simples declaração de EPI eficaz."
 )
 
+
+FUNDAMENTO_QUIMICOS_GERAL = (
+    "NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. "
+    "Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante. "
+    "Para agentes químicos, a simples indicação de EPI eficaz no PPP não afasta automaticamente a especialidade; "
+    "é necessária análise concreta da neutralização."
+)
+
+FUNDAMENTO_QUIMICOS_POEIRAS = (
+    "NR-15, Anexo 12, e normas técnicas de higiene ocupacional aplicáveis às poeiras minerais. "
+    "Quando houver sílica livre cristalizada ou outro agente cancerígeno, a análise deve considerar também "
+    "a avaliação qualitativa e a proteção previdenciária reforçada."
+)
+
+FUNDAMENTO_QUIMICOS_OLEOS = (
+    "NR-15, Anexo 13: óleos minerais, hidrocarbonetos, graxas e substâncias equivalentes podem ser analisados "
+    "qualitativamente quando houver contato habitual e permanente. A eficácia do EPI exige comprovação concreta."
+)
+
 AGENTES = {
     "ruido": {
         "grupo": "Físico",
@@ -430,7 +457,7 @@ AGENTES = {
         "norma": "NR-15 Anexo 13",
         "limite": "Qualitativo",
         "metodologia": "Laudo qualitativo",
-        "fundamento": 'NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante.' + " " + 'Para agentes químicos, a simples indicação de EPI eficaz no PPP não afasta automaticamente a especialidade. É necessária análise concreta da efetiva neutralização, considerando concentração, forma de contato, metodologia, CA, treinamento, troca, fiscalização e compatibilidade do EPI.'
+        "fundamento": FUNDAMENTO_QUIMICOS_GERAL
     },
     "benzeno": {
         "grupo": "Químico cancerígeno",
@@ -462,7 +489,7 @@ AGENTES = {
         "norma": "NR-15 Anexos 11, 12 e 13, conforme substância e forma de exposição",
         "limite": "Avaliação conforme substância: quantitativa quando houver limite de tolerância; qualitativa quando aplicável",
         "metodologia": "Laudo técnico/LTCAT com identificação da substância, forma de contato, concentração quando exigível e método de avaliação",
-        "fundamento": 'NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante.' + " " + 'Para agentes químicos, a simples indicação de EPI eficaz no PPP não afasta automaticamente a especialidade. É necessária análise concreta da efetiva neutralização, considerando concentração, forma de contato, metodologia, CA, treinamento, troca, fiscalização e compatibilidade do EPI.'
+        "fundamento": FUNDAMENTO_QUIMICOS_GERAL
     },
     "poeiras": {
         "grupo": "Químico",
@@ -470,7 +497,7 @@ AGENTES = {
         "norma": "NR-15 Anexo 12 e normas técnicas de higiene ocupacional aplicáveis",
         "limite": "Avaliação quantitativa ou qualitativa conforme composição da poeira e presença de sílica livre cristalizada",
         "metodologia": "Amostragem ambiental, identificação da fração respirável/total e metodologia técnica compatível",
-        "fundamento": 'NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante.' + " " + 'Agentes cancerígenos LINACH — Portaria Interministerial 09/2014: a análise tende a ser qualitativa. O art. 68, §4º, do Decreto 3.048/99 reforça que a avaliação de agentes reconhecidamente cancerígenos não se resolve pela simples declaração de EPI eficaz.'
+        "fundamento": FUNDAMENTO_QUIMICOS_GERAL
     },
     "oleos_minerais": {
         "grupo": "Químico",
@@ -478,7 +505,7 @@ AGENTES = {
         "norma": "NR-15 Anexo 13",
         "limite": "Avaliação qualitativa quando caracterizado contato habitual e permanente",
         "metodologia": "Laudo qualitativo com descrição da forma de contato e habitualidade",
-        "fundamento": 'NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante.' + " " + BASE_LEGAL["epi"]["irdr15_trf4"]
+        "fundamento": FUNDAMENTO_QUIMICOS_GERAL
     },
     "biologicos": {
         "grupo": "Biológico",
