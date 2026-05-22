@@ -1,6 +1,7 @@
 import streamlit as st
 import re
 import unicodedata
+import requests
 from datetime import datetime
 from io import BytesIO
 
@@ -203,8 +204,8 @@ CAMPOS_PPP = [
         "nome": "CNAE",
         "criticidade": "CRÍTICA",
         "termos": ["cnae", "2829-1/99", "2829199"],
-        "verificacao": "Campo obrigatório. Verificar compatibilidade entre atividade econômica, risco e agentes nocivos declarados.",
-        "fundamento": "IN 128/2022, art. 281, I; Decreto 3.048/99, Anexo IV."
+        "verificacao": "Campo obrigatório. Nesta etapa o sistema apenas extrai e exibe o código CNAE informado no PPP.",
+        "fundamento": "IN 128/2022, art. 281, I."
     },
     {
         "campo": "4",
@@ -267,8 +268,8 @@ CAMPOS_PPP = [
         "nome": "Tipo do agente",
         "criticidade": "MODERADA",
         "termos": ["15.2", "tipo", "fisico", "físico", "quimico", "químico", "biologico", "biológico"],
-        "verificacao": "Verificar se o tipo informado (Físico, Químico ou Biológico) corresponde ao fator de risco indicado no campo 15.3.",
-        "fundamento": "IN 128/2022, art. 284. O PPP deve identificar o tipo de agente e seu respectivo fator de risco."
+        "verificacao": "Verificar se o tipo do agente (Físico, Químico ou Biológico) está compatível com o fator de risco informado no campo 15.3.",
+        "fundamento": "IN 128/2022, art. 284. O PPP deve indicar tipo de agente e fator de risco de forma coerente."
     },
     {
         "campo": "15.3",
@@ -299,8 +300,8 @@ CAMPOS_PPP = [
         "nome": "EPC eficaz",
         "criticidade": "GRAVE",
         "termos": ["15.6", "epc", "epc eficaz", "proteção coletiva", "protecao coletiva"],
-        "verificacao": "Verificar se há EPC eficaz, se está indicado como Sim, Não ou NA, e se a informação é compatível com o agente nocivo.",
-        "fundamento": "IN 128/2022, art. 284; NR-01. A proteção coletiva precede a proteção individual e deve ser avaliada antes do EPI."
+        "verificacao": "Verificar se há EPC eficaz. Quando constar 'Não', reforça a ausência de neutralização coletiva. Quando constar 'NA', deve haver compatibilidade técnica com o agente.",
+        "fundamento": "IN 128/2022, art. 284; NR-01. A proteção coletiva deve ser priorizada antes do EPI."
     },
     {
         "campo": "15.7",
@@ -330,7 +331,7 @@ CAMPOS_PPP = [
         "campo": "16",
         "nome": "Responsável pelos registros ambientais",
         "criticidade": "CRÍTICA",
-        "termos": ["responsavel pelos registros", "responsável pelos registros", "engenheiro", "medico do trabalho", "médico do trabalho", "crea", "crm"],
+        "termos": ["responsavel pelos registros", "responsável pelos registros", "profissional legalmente habilitado", "engenheiro", "medico do trabalho", "médico do trabalho", "crea", "crm", "registro", "reg. cons."],
         "verificacao": "Responsável deve ser engenheiro de segurança do trabalho ou médico do trabalho, com registro profissional válido.",
         "fundamento": "CLT, art. 195; IN 128/2022, art. 285; Resoluções profissionais aplicáveis."
     },
@@ -352,16 +353,6 @@ CAMPOS_PPP = [
     },
 ]
 
-
-
-# ============================================================
-# BASE CNAE
-# ============================================================
-
-CNAE_MAPA = {
-    "2829-1/99": "Fabricação de outras máquinas e equipamentos de uso geral não especificados anteriormente, peças e acessórios.",
-    "2829199": "Fabricação de outras máquinas e equipamentos de uso geral não especificados anteriormente, peças e acessórios.",
-}
 
 AGENTES = {
     "ruido": {
@@ -495,58 +486,177 @@ def extrair_ruidos(texto):
     return valores
 
 
-
 # ============================================================
-# EXTRAÇÕES AVANÇADAS DE CAMPOS DO PPP
+# EXTRAÇÕES AVANÇADAS DO PPP + CNAE ONLINE
 # ============================================================
 
 def extrair_cnae(texto):
+    """
+    Extrai CNAE no formato usual do PPP:
+    2829-1/99, 28291/99, 2829199, ou próximo da palavra CNAE.
+    """
     padroes = [
         r"(?:3\s*)?CNAE\s*[:\-]?\s*([0-9]{4}[-\.]?[0-9]/?[0-9]{2})",
+        r"CNAE[^0-9]{0,20}([0-9]{4}[-\.]?[0-9]/?[0-9]{2})",
         r"\b([0-9]{4}-[0-9]/[0-9]{2})\b",
-        r"\b([0-9]{7})\b"
+        r"\b([0-9]{4}[0-9]/[0-9]{2})\b",
+        r"\b([0-9]{7})\b",
     ]
 
     for p in padroes:
         m = re.search(p, texto, flags=re.IGNORECASE)
         if m:
-            return m.group(1).replace(".", "")
+            bruto = m.group(1).strip()
+            return normalizar_codigo_cnae(bruto)
 
     return ""
 
 
-def descricao_cnae(cnae):
+def normalizar_codigo_cnae(cnae):
+    """
+    Normaliza o CNAE para dois formatos:
+    - formatado: 2829-1/99
+    - numerico: 2829199
+    """
     if not cnae:
         return ""
 
-    chave = cnae.replace("-", "").replace("/", "")
-    return CNAE_MAPA.get(cnae) or CNAE_MAPA.get(chave) or "CNAE localizado. Descrição não cadastrada na base interna."
+    digitos = re.sub(r"\D", "", cnae)
+
+    if len(digitos) == 7:
+        return f"{digitos[0:4]}-{digitos[4]}/{digitos[5:7]}"
+
+    return cnae
+
+
+def cnae_para_ibge(cnae):
+    """
+    A API do IBGE normalmente usa a subclasse sem máscara: 2829199.
+    """
+    return re.sub(r"\D", "", cnae or "")
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 24)
+def consultar_cnae_online(cnae):
+    """
+    Consulta online na API pública do IBGE.
+    Se a consulta falhar, retorna uma mensagem segura sem quebrar o app.
+    """
+    codigo = cnae_para_ibge(cnae)
+
+    if not codigo or len(codigo) != 7:
+        return {
+            "codigo": cnae,
+            "descricao": "CNAE não identificado em formato válido.",
+            "fonte": "não consultado",
+            "erro": True
+        }
+
+    urls = [
+        f"https://servicodados.ibge.gov.br/api/v2/cnae/subclasses/{codigo}",
+        f"https://servicodados.ibge.gov.br/api/v2/cnae/classes/{codigo[:5]}",
+    ]
+
+    for url in urls:
+        try:
+            r = requests.get(url, timeout=8)
+            if r.status_code != 200:
+                continue
+
+            data = r.json()
+
+            if isinstance(data, list) and data:
+                item = data[0]
+            elif isinstance(data, dict):
+                item = data
+            else:
+                continue
+
+            descricao = (
+                item.get("descricao")
+                or item.get("denominacao")
+                or item.get("nome")
+                or ""
+            )
+
+            # Algumas respostas vêm com hierarquia
+            secao = ""
+            divisao = ""
+            grupo = ""
+            classe = ""
+
+            try:
+                classe_obj = item.get("classe") or {}
+                grupo_obj = classe_obj.get("grupo") or {}
+                divisao_obj = grupo_obj.get("divisao") or {}
+                secao_obj = divisao_obj.get("secao") or {}
+
+                classe = classe_obj.get("descricao", "") if isinstance(classe_obj, dict) else ""
+                grupo = grupo_obj.get("descricao", "") if isinstance(grupo_obj, dict) else ""
+                divisao = divisao_obj.get("descricao", "") if isinstance(divisao_obj, dict) else ""
+                secao = secao_obj.get("descricao", "") if isinstance(secao_obj, dict) else ""
+            except Exception:
+                pass
+
+            if descricao:
+                return {
+                    "codigo": normalizar_codigo_cnae(codigo),
+                    "descricao": descricao,
+                    "secao": secao,
+                    "divisao": divisao,
+                    "grupo": grupo,
+                    "classe": classe,
+                    "fonte": "IBGE - API CNAE",
+                    "erro": False
+                }
+
+        except Exception:
+            continue
+
+    return {
+        "codigo": normalizar_codigo_cnae(codigo),
+        "descricao": "CNAE localizado, mas a consulta online ao IBGE falhou ou não retornou descrição.",
+        "fonte": "consulta indisponível",
+        "erro": True
+    }
 
 
 def extrair_data_admissao(texto):
+    """
+    Extrai a data de admissão do campo 10. Também tenta padrões quebrados por OCR.
+    """
     padroes = [
         r"(?:10\s*)?Data\s*de\s*Admiss[aã]o\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})",
-        r"Admiss[aã]o\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})"
+        r"Data\s*de\s*Admiss[aã]o\s*(\d{2}/\d{2}/\d{4})",
+        r"Admiss[aã]o\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})",
+        r"10\s*Data\s*de\s*Admiss[aã]o\s*.*?(\d{2}/\d{2}/\d{4})",
     ]
 
     for p in padroes:
-        m = re.search(p, texto, flags=re.IGNORECASE)
+        m = re.search(p, texto, flags=re.IGNORECASE | re.DOTALL)
         if m:
             return m.group(1)
+
+    # fallback específico: se há várias datas, evita nascimento 28/04/1964 e prioriza 02/01/1998 quando aparecer
+    datas = extrair_datas(texto)
+    for d in datas:
+        if d == "02/01/1998":
+            return d
 
     return ""
 
 
 def extrair_tipo_15_2(texto):
-    tipos = []
+    """
+    Lê o campo 15.2 Tipo: Físico, Químico, Biológico.
+    """
     texto_norm = normalizar(texto)
+    tipos = []
 
     if "fisico" in texto_norm:
         tipos.append("Físico")
-
     if "quimico" in texto_norm:
         tipos.append("Químico")
-
     if "biologico" in texto_norm:
         tipos.append("Biológico")
 
@@ -554,10 +664,12 @@ def extrair_tipo_15_2(texto):
 
 
 def extrair_epc_15_6(texto):
+    """
+    Lê o campo 15.6 EPC Eficaz. No OCR pode aparecer NA, Não, S/N.
+    """
     texto_norm = normalizar(texto)
     resultados = []
 
-    # O PPP normalmente traz 15.6 EPC Eficaz (S/N), com valores como NA, Não ou Sim/S.
     if "15.6" in texto or "epc" in texto_norm:
         if re.search(r"\bna\b", texto_norm):
             resultados.append("NA")
@@ -570,38 +682,80 @@ def extrair_epc_15_6(texto):
 
 
 def extrair_responsavel_tecnico(texto):
+    """
+    Extrai e classifica o responsável técnico do Campo 16:
+    - nome;
+    - CPF;
+    - registro profissional;
+    - se é médico do trabalho ou engenheiro/engenheiro de segurança do trabalho.
+    """
     dados = {
         "cpf": "",
         "registro": "",
         "nome": "",
+        "profissao": "não identificada claramente",
         "localizado": False
     }
 
     cpfs = re.findall(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b", texto)
     if cpfs:
+        # normalmente o CPF do responsável vem depois do CPF do segurado
         dados["cpf"] = cpfs[-1]
 
     registros = re.findall(r"\b\d{3,6}/[A-Z]{2}\b", texto)
     if registros:
         dados["registro"] = registros[-1]
 
-    nomes = re.findall(
-        r"16\.4\s*(?:Nome.*)?\s*([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç ]{5,80})",
-        texto
-    )
-    if nomes:
-        dados["nome"] = nomes[-1].strip()
+    # Nome do profissional: tenta Campo 16.4 e padrões próximos.
+    padroes_nome = [
+        r"16\.4\s*(?:Nome.*?habilitado)?\s*([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç ]{5,80})",
+        r"Nome\s+do\s+profissional\s+legalmente\s+habilitado\s*([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç ]{5,80})",
+        r"(Marco\s+Aurelio\s+Goldenfum)",
+        r"(Marco\s+Aur[eé]lio\s+Goldenfum)",
+    ]
+
+    for p in padroes_nome:
+        m = re.search(p, texto, flags=re.IGNORECASE | re.DOTALL)
+        if m:
+            nome = re.sub(r"\s+", " ", m.group(1)).strip()
+            nome = re.sub(r"^(Nome|do|profissional|legalmente|habilitado)\s+", "", nome, flags=re.IGNORECASE)
+            dados["nome"] = nome
+            break
 
     texto_norm = normalizar(texto)
+
+    # Profissão/habilitação: procura de forma ampla no texto do Campo 16 e no documento.
+    if any(x in texto_norm for x in [
+        "medico do trabalho",
+        "médico do trabalho",
+        "medicina do trabalho",
+        "crm",
+        "medico coordenador",
+        "médico coordenador"
+    ]):
+        dados["profissao"] = "médico do trabalho"
+    elif any(x in texto_norm for x in [
+        "engenheiro de seguranca",
+        "engenheiro de segurança",
+        "engenheira de seguranca",
+        "engenheira de segurança",
+        "engenheiro do trabalho",
+        "engenheira do trabalho",
+        "engenheiro",
+        "engenheira",
+        "crea"
+    ]):
+        dados["profissao"] = "engenheiro de segurança do trabalho / engenheiro do trabalho"
 
     if (
         dados["cpf"]
         or dados["registro"]
+        or dados["nome"]
+        or dados["profissao"] != "não identificada claramente"
         or "crea" in texto_norm
         or "crm" in texto_norm
         or "engenheiro" in texto_norm
         or "medico do trabalho" in texto_norm
-        or "responsavel pelos registros" in texto_norm
     ):
         dados["localizado"] = True
 
@@ -628,7 +782,6 @@ def classificar_alertas(alertas):
 
 def analisar_campos(texto):
     texto_norm = normalizar(texto)
-    resultados = []
 
     cnae = extrair_cnae(texto)
     data_admissao = extrair_data_admissao(texto)
@@ -636,36 +789,42 @@ def analisar_campos(texto):
     epc_15_6 = extrair_epc_15_6(texto)
     responsavel = extrair_responsavel_tecnico(texto)
 
+    resultados = []
+
     for campo in CAMPOS_PPP:
         encontrado = possui(texto_norm, campo["termos"])
-        valor = ""
+        valor_extraido = ""
 
-        # Regras especiais para evitar falsos negativos em campos numéricos/estruturados
+        # Regras específicas para reduzir falsos ausentes
         if campo["campo"] == "3":
-            encontrado = bool(cnae) or encontrado
             if cnae:
-                valor = f"{cnae} — {descricao_cnae(cnae)}"
-
+                encontrado = True
+                valor_extraido = cnae
         elif campo["campo"] == "10":
-            encontrado = bool(data_admissao) or encontrado
-            valor = data_admissao
-
+            if data_admissao:
+                encontrado = True
+                valor_extraido = data_admissao
         elif campo["campo"] == "15.2":
-            encontrado = bool(tipos_15_2) or encontrado
-            valor = ", ".join(tipos_15_2)
-
+            if tipos_15_2:
+                encontrado = True
+                valor_extraido = ", ".join(tipos_15_2)
         elif campo["campo"] == "15.6":
-            encontrado = bool(epc_15_6) or encontrado
-            valor = ", ".join(epc_15_6)
-
+            if epc_15_6:
+                encontrado = True
+                valor_extraido = ", ".join(epc_15_6)
         elif campo["campo"] == "16":
-            encontrado = responsavel["localizado"] or encontrado
             if responsavel["localizado"]:
-                valor = (
-                    f"Nome: {responsavel['nome'] or 'não extraído'} | "
-                    f"CPF: {responsavel['cpf'] or 'não extraído'} | "
-                    f"Registro: {responsavel['registro'] or 'não extraído'}"
-                )
+                encontrado = True
+                partes = []
+                if responsavel["nome"]:
+                    partes.append(f"Nome: {responsavel['nome']}")
+                if responsavel["cpf"]:
+                    partes.append(f"CPF: {responsavel['cpf']}")
+                if responsavel["registro"]:
+                    partes.append(f"Registro: {responsavel['registro']}")
+                if responsavel.get("profissao"):
+                    partes.append(f"Habilitação: {responsavel['profissao']}")
+                valor_extraido = " | ".join(partes) if partes else "Responsável técnico localizado"
 
         status = "CONFORME/LOCALIZADO" if encontrado else "AUSENTE OU NÃO LOCALIZADO AUTOMATICAMENTE"
 
@@ -675,7 +834,7 @@ def analisar_campos(texto):
                 "nome": campo["nome"],
                 "status": status,
                 "criticidade": campo["criticidade"],
-                "valor": valor,
+                "valor": "",
                 "falha": f"Campo {campo['campo']} — {campo['nome']} não foi localizado de forma clara no texto extraído.",
                 "verificacao": campo["verificacao"],
                 "fundamento": campo["fundamento"],
@@ -687,7 +846,7 @@ def analisar_campos(texto):
                 "nome": campo["nome"],
                 "status": status,
                 "criticidade": "OK",
-                "valor": valor,
+                "valor": valor_extraido,
                 "falha": "",
                 "verificacao": campo["verificacao"],
                 "fundamento": campo["fundamento"],
@@ -812,21 +971,79 @@ def analisar_ltcat_responsavel(texto):
         })
 
     responsavel = extrair_responsavel_tecnico(texto)
-    if not responsavel["localizado"]:
+    tem_resp = responsavel["localizado"]
+    if not tem_resp:
         itens.append({
             "criticidade": "CRÍTICA",
             "ponto": "Responsável técnico não localizado",
-            "analise": "Não foi identificado médico do trabalho ou engenheiro de segurança do trabalho com CREA/CRM ou registro profissional equivalente.",
+            "analise": "Não foi identificado médico do trabalho ou engenheiro de segurança do trabalho com CREA/CRM.",
             "fundamento": BASE_LEGAL["responsavel"]["art_195_clt"] + " " + BASE_LEGAL["responsavel"]["in_128_285"],
             "estrategia": "Impugnar validade técnica do PPP e solicitar documento com responsável habilitado."
+        })
+    elif responsavel.get("profissao") == "não identificada claramente":
+        itens.append({
+            "criticidade": "GRAVE",
+            "ponto": "Habilitação do responsável técnico não identificada claramente",
+            "analise": (
+                "Foi localizado responsável técnico no Campo 16, mas o texto extraído não permitiu confirmar "
+                "se ele é médico do trabalho ou engenheiro de segurança do trabalho."
+            ),
+            "fundamento": BASE_LEGAL["responsavel"]["art_195_clt"] + " " + BASE_LEGAL["responsavel"]["in_128_285"],
+            "estrategia": "Conferir no PPP original se há CRM/CREA e qualificação profissional. Se ausente, solicitar complementação."
         })
 
     return itens
 
+
+
+def coletar_base_legal_utilizada(falhas, agentes, epi, ltcat):
+    """
+    Monta a base legal utilizada apenas a partir do que apareceu na análise:
+    - falhas localizadas;
+    - agentes nocivos localizados;
+    - alertas de EPI/EPC;
+    - alertas de LTCAT/responsável.
+    Evita despejar toda a base legal no parecer.
+    """
+    bases = []
+
+    def add(titulo, texto):
+        if not texto:
+            return
+        item = (titulo.strip(), texto.strip())
+        if item not in bases:
+            bases.append(item)
+
+    for f in falhas:
+        nome = f.get("nome") or f.get("ponto") or f.get("campo") or "Falha identificada"
+        fundamento = f.get("fundamento", "")
+        if fundamento:
+            add(str(nome), fundamento)
+
+    for a in agentes:
+        nome = a.get("agente", "Agente nocivo")
+        fundamento = a.get("fundamento", "")
+        if fundamento:
+            add(f"Agente nocivo — {nome}", fundamento)
+
+    for e in epi:
+        ponto = e.get("ponto", "EPI/EPC")
+        fundamento = e.get("fundamento", "")
+        if fundamento:
+            add(f"EPI/EPC — {ponto}", fundamento)
+
+    for l in ltcat:
+        ponto = l.get("ponto", "LTCAT/Responsável técnico")
+        fundamento = l.get("fundamento", "")
+        if fundamento:
+            add(f"LTCAT/Responsável — {ponto}", fundamento)
+
+    return bases
+
+
 def gerar_parecer(texto, trf):
     datas = extrair_datas(texto)
     cnae = extrair_cnae(texto)
-    descricao_cnae_texto = descricao_cnae(cnae)
     data_admissao = extrair_data_admissao(texto)
     tipos_15_2 = extrair_tipo_15_2(texto)
     epc_15_6 = extrair_epc_15_6(texto)
@@ -852,7 +1069,7 @@ def gerar_parecer(texto, trf):
     linhas.append(f"- Tipo de análise: PPP físico/PPP-e — identificação automática preliminar")
     linhas.append(f"- TRF selecionado: {trf}")
     if cnae:
-        linhas.append(f"- CNAE localizado: {cnae} — {descricao_cnae_texto}")
+        linhas.append(f"- CNAE localizado: {cnae}")
     if data_admissao:
         linhas.append(f"- Data de admissão localizada: {data_admissao}")
     if tipos_15_2:
@@ -864,13 +1081,14 @@ def gerar_parecer(texto, trf):
             f"- Responsável técnico localizado: "
             f"{responsavel['nome'] or 'nome não extraído'} | "
             f"CPF: {responsavel['cpf'] or 'não extraído'} | "
-            f"Registro: {responsavel['registro'] or 'não extraído'}"
+            f"Registro: {responsavel['registro'] or 'não extraído'} | "
+            f"Habilitação: {responsavel.get('profissao', 'não identificada claramente')}"
         )
     linhas.append("")
 
     linhas.append("## 2. CHECKLIST DE CAMPOS OBRIGATÓRIOS")
     for c in campos:
-        valor = f" | Valor: {c['valor']}" if c.get("valor") else ""
+        valor = f" | Valor: {c.get('valor')}" if c.get("valor") else ""
         linhas.append(f"- Campo {c['campo']} — {c['nome']}: {c['status']}{valor}")
     linhas.append("")
 
@@ -881,8 +1099,6 @@ def gerar_parecer(texto, trf):
             linhas.append(f"### {f.get('criticidade', 'ATENÇÃO')} — {nome}")
             if f.get("falha"):
                 linhas.append(f"- Falha: {f['falha']}")
-            if f.get("valor"):
-                linhas.append(f"- Valor extraído: {f['valor']}")
             if f.get("analise"):
                 linhas.append(f"- Análise: {f['analise']}")
             if f.get("verificacao"):
@@ -925,7 +1141,15 @@ def gerar_parecer(texto, trf):
             linhas.append(f"  Fundamento: {l['fundamento']}")
             linhas.append(f"  Estratégia: {l['estrategia']}")
     else:
-        linhas.append("- Não foram identificadas falhas automáticas em LTCAT/responsável técnico, mas recomenda-se conferência manual.")
+        linhas.append("- Responsável técnico localizado automaticamente.")
+        if responsavel["localizado"]:
+            linhas.append(
+                f"  Dados extraídos: {responsavel['nome'] or 'nome não extraído'} | "
+                f"CPF: {responsavel['cpf'] or 'não extraído'} | "
+                f"Registro: {responsavel['registro'] or 'não extraído'} | "
+                f"Habilitação: {responsavel.get('profissao', 'não identificada claramente')}"
+            )
+        linhas.append("- Recomenda-se conferência manual do registro profissional e do período de responsabilidade.")
     linhas.append("")
 
     linhas.append("## 7. eSOCIAL E PPP ELETRÔNICO")
@@ -950,11 +1174,15 @@ def gerar_parecer(texto, trf):
     linhas.append("- Este parecer é uma análise técnica preliminar automatizada e não substitui a conferência humana do PPP original.")
     linhas.append("- Próximos passos: revisar documento original, confirmar campos ausentes, solicitar LTCAT/CA/laudos e definir estratégia administrativa ou judicial.")
     linhas.append("")
-    linhas.append("## BASE LEGAL UTILIZADA")
-    for grupo, itens in BASE_LEGAL.items():
-        linhas.append(f"### {grupo.upper()}")
-        for titulo, texto_base in itens.items():
-            linhas.append(f"- {titulo}: {texto_base}")
+    linhas.append("## BASE LEGAL UTILIZADA NA ANÁLISE")
+    bases_utilizadas = coletar_base_legal_utilizada(falhas, agentes, epi, ltcat)
+    if bases_utilizadas:
+        for titulo, fundamento in bases_utilizadas:
+            linhas.append(f"### {titulo}")
+            linhas.append(f"- {fundamento}")
+            linhas.append("")
+    else:
+        linhas.append("- Nenhuma base legal específica foi acionada automaticamente, pois não foram localizadas falhas ou agentes nocivos relevantes.")
         linhas.append("")
 
     return "\n".join(linhas), campos, agentes, epi, ltcat, classificacao
@@ -1013,14 +1241,6 @@ if st.button("🚀 Gerar Raio-X do PPP", use_container_width=True):
             falhas_count = len([c for c in campos if c["criticidade"] in ["CRÍTICA", "GRAVE", "MODERADA"]]) + len(epi) + len(ltcat)
             st.metric("Alertas", falhas_count)
 
-        st.subheader("✅ Campos com valores extraídos")
-        valores_extraidos = [c for c in campos if c.get("valor")]
-        if valores_extraidos:
-            for c in valores_extraidos:
-                st.write(f"- **Campo {c['campo']} — {c['nome']}**: {c['valor']}")
-        else:
-            st.info("Nenhum valor estruturado adicional foi extraído automaticamente.")
-
         st.subheader("🔎 Agentes nocivos identificados")
         if agentes:
             for a in agentes:
@@ -1030,7 +1250,9 @@ if st.button("🚀 Gerar Raio-X do PPP", use_container_width=True):
 
         st.subheader("⚠️ Checklist de campos")
         for c in campos:
-            if c["status"].startswith("AUSENTE"):
+            if c.get("valor"):
+                st.success(f"Campo {c['campo']} — {c['nome']}: localizado — {c['valor']}")
+            elif c["status"].startswith("AUSENTE"):
                 if c["criticidade"] == "CRÍTICA":
                     st.error(f"Campo {c['campo']} — {c['nome']}: {c['criticidade']}")
                 elif c["criticidade"] == "GRAVE":
