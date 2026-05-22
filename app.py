@@ -150,7 +150,7 @@ BASE_LEGAL = {
         "norma": "NR-15 Anexos 11, 12 e 13, conforme substância e forma de exposição",
         "limite": "Avaliação conforme substância: quantitativa quando houver limite de tolerância; qualitativa quando aplicável",
         "metodologia": "Laudo técnico/LTCAT com identificação da substância, forma de contato, concentração quando exigível e método de avaliação",
-        "fundamento": BASE_LEGAL["quimicos"].get("nr15_11_12_13", "") + " " + BASE_LEGAL["quimicos"].get("tema_1083_stj", "")
+        "fundamento": 'NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante.' + " " + 'Para agentes químicos, a simples indicação de EPI eficaz no PPP não afasta automaticamente a especialidade. É necessária análise concreta da efetiva neutralização, considerando concentração, forma de contato, metodologia, CA, treinamento, troca, fiscalização e compatibilidade do EPI.'
     },
     "poeiras": {
         "grupo": "Químico",
@@ -158,7 +158,7 @@ BASE_LEGAL = {
         "norma": "NR-15 Anexo 12 e normas técnicas de higiene ocupacional aplicáveis",
         "limite": "Avaliação quantitativa ou qualitativa conforme composição da poeira e presença de sílica livre cristalizada",
         "metodologia": "Amostragem ambiental, identificação da fração respirável/total e metodologia técnica compatível",
-        "fundamento": BASE_LEGAL["quimicos"].get("nr15_11_12_13", "") + " " + BASE_LEGAL["quimicos"].get("linach", "")
+        "fundamento": 'NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante.' + " " + 'Agentes cancerígenos LINACH — Portaria Interministerial 09/2014: a análise tende a ser qualitativa. O art. 68, §4º, do Decreto 3.048/99 reforça que a avaliação de agentes reconhecidamente cancerígenos não se resolve pela simples declaração de EPI eficaz.'
     },
     "oleos_minerais": {
         "grupo": "Químico",
@@ -166,7 +166,7 @@ BASE_LEGAL = {
         "norma": "NR-15 Anexo 13",
         "limite": "Avaliação qualitativa quando caracterizado contato habitual e permanente",
         "metodologia": "Laudo qualitativo com descrição da forma de contato e habitualidade",
-        "fundamento": BASE_LEGAL["quimicos"].get("nr15_11_12_13", "") + " " + BASE_LEGAL["epi"]["irdr15_trf4"]
+        "fundamento": 'NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante.' + " " + BASE_LEGAL["epi"]["irdr15_trf4"]
     },
     "biologicos": {
         "nr15_14": (
@@ -430,7 +430,7 @@ AGENTES = {
         "norma": "NR-15 Anexo 13",
         "limite": "Qualitativo",
         "metodologia": "Laudo qualitativo",
-        "fundamento": BASE_LEGAL["quimicos"].get("nr15_11_12_13", "") + " " + BASE_LEGAL["quimicos"].get("tema_1083_stj", "")
+        "fundamento": 'NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante.' + " " + 'Para agentes químicos, a simples indicação de EPI eficaz no PPP não afasta automaticamente a especialidade. É necessária análise concreta da efetiva neutralização, considerando concentração, forma de contato, metodologia, CA, treinamento, troca, fiscalização e compatibilidade do EPI.'
     },
     "benzeno": {
         "grupo": "Químico cancerígeno",
@@ -438,7 +438,7 @@ AGENTES = {
         "norma": "NR-15 Anexo 13-A; LINACH",
         "limite": "Qualquer nível relevante",
         "metodologia": "Qualitativo / PPEOB",
-        "fundamento": BASE_LEGAL["quimicos"].get("linach", "")
+        "fundamento": 'Agentes cancerígenos LINACH — Portaria Interministerial 09/2014: a análise tende a ser qualitativa. O art. 68, §4º, do Decreto 3.048/99 reforça que a avaliação de agentes reconhecidamente cancerígenos não se resolve pela simples declaração de EPI eficaz.'
     },
     "silica": {
         "grupo": "Químico cancerígeno",
@@ -446,7 +446,7 @@ AGENTES = {
         "norma": "NR-15 Anexo 12; LINACH",
         "limite": "Qualitativo/quantitativo conforme poeira",
         "metodologia": "NHO aplicável / laudo técnico",
-        "fundamento": BASE_LEGAL["quimicos"].get("linach", "")
+        "fundamento": 'Agentes cancerígenos LINACH — Portaria Interministerial 09/2014: a análise tende a ser qualitativa. O art. 68, §4º, do Decreto 3.048/99 reforça que a avaliação de agentes reconhecidamente cancerígenos não se resolve pela simples declaração de EPI eficaz.'
     },
     "amianto": {
         "grupo": "Químico cancerígeno",
@@ -454,7 +454,7 @@ AGENTES = {
         "norma": "NR-15 Anexo 12; LINACH",
         "limite": "Qualitativo",
         "metodologia": "Laudo qualitativo",
-        "fundamento": BASE_LEGAL["quimicos"].get("linach", "")
+        "fundamento": 'Agentes cancerígenos LINACH — Portaria Interministerial 09/2014: a análise tende a ser qualitativa. O art. 68, §4º, do Decreto 3.048/99 reforça que a avaliação de agentes reconhecidamente cancerígenos não se resolve pela simples declaração de EPI eficaz.'
     },
     "fumos_metalicos": {
         "grupo": "Químico",
@@ -462,7 +462,7 @@ AGENTES = {
         "norma": "NR-15 Anexos 11, 12 e 13, conforme substância e forma de exposição",
         "limite": "Avaliação conforme substância: quantitativa quando houver limite de tolerância; qualitativa quando aplicável",
         "metodologia": "Laudo técnico/LTCAT com identificação da substância, forma de contato, concentração quando exigível e método de avaliação",
-        "fundamento": BASE_LEGAL["quimicos"].get("nr15_11_12_13", "") + " " + BASE_LEGAL["quimicos"].get("tema_1083_stj", "")
+        "fundamento": 'NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante.' + " " + 'Para agentes químicos, a simples indicação de EPI eficaz no PPP não afasta automaticamente a especialidade. É necessária análise concreta da efetiva neutralização, considerando concentração, forma de contato, metodologia, CA, treinamento, troca, fiscalização e compatibilidade do EPI.'
     },
     "poeiras": {
         "grupo": "Químico",
@@ -470,7 +470,7 @@ AGENTES = {
         "norma": "NR-15 Anexo 12 e normas técnicas de higiene ocupacional aplicáveis",
         "limite": "Avaliação quantitativa ou qualitativa conforme composição da poeira e presença de sílica livre cristalizada",
         "metodologia": "Amostragem ambiental, identificação da fração respirável/total e metodologia técnica compatível",
-        "fundamento": BASE_LEGAL["quimicos"].get("nr15_11_12_13", "") + " " + BASE_LEGAL["quimicos"].get("linach", "")
+        "fundamento": 'NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante.' + " " + 'Agentes cancerígenos LINACH — Portaria Interministerial 09/2014: a análise tende a ser qualitativa. O art. 68, §4º, do Decreto 3.048/99 reforça que a avaliação de agentes reconhecidamente cancerígenos não se resolve pela simples declaração de EPI eficaz.'
     },
     "oleos_minerais": {
         "grupo": "Químico",
@@ -478,7 +478,7 @@ AGENTES = {
         "norma": "NR-15 Anexo 13",
         "limite": "Avaliação qualitativa quando caracterizado contato habitual e permanente",
         "metodologia": "Laudo qualitativo com descrição da forma de contato e habitualidade",
-        "fundamento": BASE_LEGAL["quimicos"].get("nr15_11_12_13", "") + " " + BASE_LEGAL["epi"]["irdr15_trf4"]
+        "fundamento": 'NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante.' + " " + BASE_LEGAL["epi"]["irdr15_trf4"]
     },
     "biologicos": {
         "grupo": "Biológico",
@@ -1007,7 +1007,7 @@ def analisar_epi(texto, agentes):
                 "criticidade": "CRÍTICA",
                 "ponto": "EPI x agente cancerígeno",
                 "analise": "Para agentes cancerígenos/LINACH, a simples declaração de EPI eficaz não neutraliza juridicamente o risco.",
-                "fundamento": BASE_LEGAL["quimicos"].get("linach", "") + " " + BASE_LEGAL["epi"]["irdr15_trf4"],
+                "fundamento": 'Agentes cancerígenos LINACH — Portaria Interministerial 09/2014: a análise tende a ser qualitativa. O art. 68, §4º, do Decreto 3.048/99 reforça que a avaliação de agentes reconhecidamente cancerígenos não se resolve pela simples declaração de EPI eficaz.' + " " + BASE_LEGAL["epi"]["irdr15_trf4"],
                 "estrategia": "Impugnar eficácia do EPI e defender análise qualitativa."
             })
         elif "biologico" in grupo or "biológico" in grupo:
@@ -1027,7 +1027,7 @@ def analisar_epi(texto, agentes):
                     "validade, fornecimento, treinamento, troca, higienização, fiscalização e compatibilidade "
                     "com a forma de exposição. A mera marcação de EPI eficaz no PPP não encerra a análise."
                 ),
-                "fundamento": BASE_LEGAL["quimicos"].get("tema_1083_stj", "") + " " + BASE_LEGAL["epi"]["tema_213_tnu"] + " " + BASE_LEGAL["epi"]["nr06"],
+                "fundamento": 'Para agentes químicos, a simples indicação de EPI eficaz no PPP não afasta automaticamente a especialidade. É necessária análise concreta da efetiva neutralização, considerando concentração, forma de contato, metodologia, CA, treinamento, troca, fiscalização e compatibilidade do EPI.' + " " + BASE_LEGAL["epi"]["tema_213_tnu"] + " " + BASE_LEGAL["epi"]["nr06"],
                 "estrategia": "Conferir CA, campo 15.9 e LTCAT. Se houver omissão, impugnar a neutralização do agente químico."
             })
         else:
