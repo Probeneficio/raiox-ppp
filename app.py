@@ -580,28 +580,27 @@ def extrair_ruidos(texto):
 
 def extrair_cnae(texto):
     """
-    Extrai apenas o código CNAE do PPP.
-    Não faz análise do CNAE. Apenas localiza e exibe o código.
-    Aceita formatos comuns e erros leves de OCR:
-    2829-1/99, 28291/99, 2829199, 2829 1 99.
+    Extrai apenas o código CNAE do PPP ou do campo manual.
+    Aceita formatos: 2829-1/99, 28291/99, 2829199, 2829 1 99.
     """
-    texto_original = texto or ""
-    texto_limpo = re.sub(r"[–—]", "-", texto_original)
+    texto = texto or ""
+
+    # Prioriza preenchimento manual
+    manual = re.search(r"(?im)^\s*3\s*[-:]\s*CNAE\s*:\s*([0-9\-\s/\.]{5,20})\s*$", texto)
+    if manual:
+        return normalizar_codigo_cnae(manual.group(1))
 
     padroes = [
-        r"(?:3\s*)?CNAE\s*[:\-]?\s*([0-9]{4}\s*[-]?\s*[0-9]\s*/\s*[0-9]{2})",
-        r"CNAE[^0-9]{0,40}([0-9]{4}\s*[-]?\s*[0-9]\s*/\s*[0-9]{2})",
+        r"(?:3\s*[-:]?\s*)?CNAE\s*[:\-]?\s*([0-9]{4}\s*[-]?\s*[0-9]\s*/\s*[0-9]{2})",
+        r"CNAE[^0-9]{0,80}([0-9]{4}\s*[-]?\s*[0-9]\s*/\s*[0-9]{2})",
         r"\b([0-9]{4}\s*-\s*[0-9]\s*/\s*[0-9]{2})\b",
         r"\b([0-9]{5}\s*/\s*[0-9]{2})\b",
-        r"\b([0-9]{7})\b",
         r"\b([0-9]{4}\s+[0-9]\s+[0-9]{2})\b",
     ]
-
     for p in padroes:
-        m = re.search(p, texto_limpo, flags=re.IGNORECASE)
+        m = re.search(p, texto, flags=re.IGNORECASE)
         if m:
-            bruto = m.group(1)
-            return normalizar_codigo_cnae(bruto)
+            return normalizar_codigo_cnae(m.group(1))
 
     return ""
 
@@ -612,13 +611,10 @@ def normalizar_codigo_cnae(cnae):
     """
     if not cnae:
         return ""
-
     digitos = re.sub(r"\D", "", str(cnae))
-
     if len(digitos) >= 7:
         digitos = digitos[:7]
         return f"{digitos[0:4]}-{digitos[4]}/{digitos[5:7]}"
-
     return str(cnae).strip()
 
 
@@ -922,12 +918,12 @@ def analisar_campos(texto):
     texto_norm = normalizar(texto)
 
     cnae = extrair_cnae(texto)
-    data_admissao = extrair_data_admissao(texto)
+    data_admissao = extrair_data_admissao(texto) or valor_manual_campo(texto, "10")
     tipos_15_2 = extrair_tipo_15_2(texto)
     epc_15_6 = extrair_epc_15_6(texto)
     responsavel = extrair_responsavel_tecnico(texto)
-    cpf_ou_nit = extrair_cpf_ou_nit(texto)
-    campo9_valor = extrair_campo9_ctps_ou_esocial(texto)
+    cpf_ou_nit = extrair_cpf_ou_nit(texto) or valor_manual_campo(texto, "6")
+    campo9_valor = extrair_campo9_ctps_ou_esocial(texto) or valor_manual_campo(texto, "9")
 
     resultados = []
 
@@ -1359,6 +1355,139 @@ def gerar_parecer(texto, trf):
     return "\n".join(linhas), campos, agentes, epi, ltcat, classificacao
 
 
+
+# ============================================================
+# COMPLEMENTAÇÃO MANUAL E REANÁLISE
+# ============================================================
+
+MARCADOR_CAMPOS_MANUAIS = "=== CAMPOS NÃO LIDOS PELO OCR — PREENCHER MANUALMENTE ==="
+
+CAMPOS_EDITAVEIS_ANALISE = [
+    ("1", "CNPJ/CEI/CAEPF/CNO"),
+    ("2", "Nome Empresarial"),
+    ("3", "CNAE"),
+    ("4", "Nome do Trabalhador"),
+    ("5", "BR/PDH"),
+    ("6", "CPF/NIT"),
+    ("7", "Data de Nascimento"),
+    ("8", "Sexo"),
+    ("9", "CTPS / Matrícula eSocial"),
+    ("10", "Data de Admissão"),
+    ("11", "Regime de Revezamento"),
+    ("12", "CAT Registrada"),
+    ("13", "Lotação e Atribuição"),
+    ("14", "Profissiografia / Descrição das Atividades"),
+    ("15.1", "Período"),
+    ("15.2", "Tipo"),
+    ("15.3", "Fator de Risco"),
+    ("15.4", "Intensidade / Concentração"),
+    ("15.5", "Técnica Utilizada"),
+    ("15.6", "EPC Eficaz"),
+    ("15.7", "EPI Eficaz"),
+    ("15.8", "CA EPI"),
+    ("15.9", "Atendimento NR-06 e NR-01"),
+    ("16", "Responsável pelos Registros Ambientais"),
+    ("16.1", "Período do responsável técnico"),
+    ("16.2", "CPF/NIT do Responsável"),
+    ("16.3", "Registro Conselho de Classe"),
+    ("16.4", "Nome do Profissional Legalmente Habilitado"),
+    ("17", "Data de Emissão do PPP"),
+    ("18", "Representante Legal / Assinatura"),
+]
+
+
+def valor_manual_campo(texto, numero):
+    """
+    Lê valor preenchido manualmente em linhas como:
+    3 - CNAE: 2829-1/99
+    6 - CPF/NIT: 12345678900
+    """
+    padrao = rf"(?im)^\s*{re.escape(numero)}\s*[-:]\s*[^:\n]*:\s*(.+?)\s*$"
+    m = re.search(padrao, texto or "")
+    if m:
+        return m.group(1).strip()
+    return ""
+
+
+def campo_tem_valor(texto, numero, descricao):
+    """
+    Verifica se um campo está suficientemente lido.
+    Não basta existir o número do campo; precisa existir valor ou extração específica.
+    """
+    texto = texto or ""
+    texto_norm = normalizar(texto)
+
+    # Se o usuário preencheu manualmente, considera localizado.
+    if valor_manual_campo(texto, numero):
+        return True
+
+    if numero == "1":
+        return bool(re.search(r"\b\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\b", texto))
+    if numero == "3":
+        return bool(extrair_cnae(texto))
+    if numero == "6":
+        return bool(extrair_cpf_ou_nit(texto))
+    if numero == "9":
+        return bool(extrair_campo9_ctps_ou_esocial(texto))
+    if numero == "10":
+        return bool(extrair_data_admissao(texto))
+    if numero == "15.2":
+        return bool(extrair_tipo_15_2(texto))
+    if numero == "15.6":
+        return bool(extrair_epc_15_6(texto))
+    if numero == "16":
+        return extrair_responsavel_tecnico(texto).get("localizado", False)
+    if numero == "16.2":
+        return bool(re.search(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b", texto) or re.search(r"\b\d{10,11}\b", texto))
+    if numero == "16.3":
+        return bool(re.search(r"\b(?:CRM|CREA)?\s*\.?\s*\d{2,6}/?[A-Z]{0,2}\b", texto, flags=re.IGNORECASE))
+    if numero == "16.4":
+        resp = extrair_responsavel_tecnico(texto)
+        return bool(resp.get("nome"))
+    if numero == "17":
+        return "data de emissao" in texto_norm or "data de emissão" in texto.lower() or bool(extrair_datas(texto))
+    if numero == "18":
+        return any(x in texto_norm for x in ["representante legal", "assinatura", "assinado"])
+
+    # Verificação genérica: descrição ou termos próximos encontrados
+    desc_norm = normalizar(descricao)
+    if desc_norm in texto_norm:
+        return True
+
+    return False
+
+
+def preparar_texto_editavel(texto):
+    """
+    Acrescenta ao fim do texto extraído um bloco com qualquer campo analisado
+    que não tenha sido lido com valor suficiente. O usuário pode preencher
+    manualmente e clicar de novo em Gerar Raio-X do PPP.
+    """
+    texto = texto or ""
+
+    # Evita duplicar o bloco se o usuário reabrir ou reanalisar.
+    if MARCADOR_CAMPOS_MANUAIS in texto:
+        return texto
+
+    faltantes = []
+    for numero, descricao in CAMPOS_EDITAVEIS_ANALISE:
+        if not campo_tem_valor(texto, numero, descricao):
+            faltantes.append(f"{numero} - {descricao}: ")
+
+    if not faltantes:
+        return texto
+
+    bloco = (
+        "\n\n"
+        f"{MARCADOR_CAMPOS_MANUAIS}\n"
+        "Preencha somente os campos que conseguir confirmar no PPP original. Depois clique novamente em GERAR RAIO-X DO PPP.\n\n"
+        + "\n".join(faltantes)
+        + "\n"
+    )
+
+    return texto.rstrip() + bloco
+
+
 # ============================================================
 # INTERFACE STREAMLIT
 # ============================================================
@@ -1380,13 +1509,15 @@ texto_final = ""
 if uploaded_file:
     with st.spinner("Extraindo texto do PPP..."):
         texto_final = extrair_texto_pdf(uploaded_file)
-    st.success("PDF carregado e texto extraído.")
+        texto_final = preparar_texto_editavel(texto_final)
+    st.success("PDF carregado e texto extraído. Revise e complete manualmente os campos faltantes, se necessário.")
 elif texto_manual.strip():
-    texto_final = texto_manual
+    texto_final = preparar_texto_editavel(texto_manual)
 
 if texto_final:
-    with st.expander("Ver texto extraído / editável", expanded=False):
-        texto_final = st.text_area("Texto base da análise", value=texto_final, height=300)
+    with st.expander("Ver texto extraído / editável", expanded=True):
+        st.info("Se algum campo não foi lido, preencha no bloco 'CAMPOS NÃO LIDOS PELO OCR' e clique novamente em Gerar Raio-X do PPP.")
+        texto_final = st.text_area("Texto base da análise", value=texto_final, height=420)
 
 if st.button("🚀 Gerar Raio-X do PPP", use_container_width=True):
     if not texto_final.strip():
