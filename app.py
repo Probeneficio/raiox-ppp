@@ -261,17 +261,17 @@ CAMPOS_PPP = [
     },
     {
         "campo": "6",
-        "nome": "CPF",
+        "nome": "CPF/NIT",
         "criticidade": "CRÍTICA",
-        "termos": ["cpf"],
+        "termos": ["cpf", "nit", "pis", "pasep"],
         "verificacao": "CPF deve corresponder ao trabalhador. CPF incorreto invalida a identificação do segurado.",
         "fundamento": "IN 128/2022, art. 281."
     },
     {
         "campo": "9",
-        "nome": "Matrícula eSocial",
+        "nome": "CTPS / Matrícula eSocial",
         "criticidade": "CRÍTICA",
-        "termos": ["matricula", "matrícula", "esocial"],
+        "termos": ["ctps", "matricula", "matrícula", "esocial"],
         "verificacao": "Para PPP emitido a partir de 01/01/2023, matrícula eSocial é obrigatória.",
         "fundamento": "IN 128/2022, art. 291; PPP-e obrigatório a partir de 01/01/2023."
     },
@@ -881,6 +881,8 @@ def analisar_campos(texto):
     tipos_15_2 = extrair_tipo_15_2(texto)
     epc_15_6 = extrair_epc_15_6(texto)
     responsavel = extrair_responsavel_tecnico(texto)
+    cpf_ou_nit = extrair_cpf_ou_nit(texto)
+    campo9_valor = extrair_campo9_ctps_ou_esocial(texto)
 
     resultados = []
 
@@ -893,6 +895,14 @@ def analisar_campos(texto):
             if cnae:
                 encontrado = True
                 valor_extraido = cnae
+        elif campo["campo"] == "6":
+            if cpf_ou_nit:
+                encontrado = True
+                valor_extraido = cpf_ou_nit
+        elif campo["campo"] == "9":
+            if campo9_valor:
+                encontrado = True
+                valor_extraido = campo9_valor
         elif campo["campo"] == "10":
             if data_admissao:
                 encontrado = True
