@@ -873,6 +873,51 @@ def classificar_alertas(alertas):
 # MOTOR DE ANÁLISE
 # ============================================================
 
+
+def extrair_cpf_ou_nit(texto):
+    """
+    Campo 6: aceita CPF, NIT, PIS ou PASEP.
+    Também reconhece preenchimento manual no bloco de edição.
+    """
+    texto = texto or ""
+
+    padroes = [
+        r"6\s*[-:]?\s*(?:CPF/NIT|CPF|NIT|PIS|PASEP)\s*[:\-]?\s*([0-9.\-]{10,20})",
+        r"(?:CPF/NIT|CPF)\s*[:\-]?\s*([0-9]{3}\.?[0-9]{3}\.?[0-9]{3}-?[0-9]{2})",
+        r"(?:NIT|PIS|PASEP)\s*[:\-]?\s*([0-9]{10,11})",
+    ]
+
+    for padrao in padroes:
+        m = re.search(padrao, texto, flags=re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+
+    return ""
+
+
+def extrair_campo9_ctps_ou_esocial(texto):
+    """
+    Campo 9: aceita CTPS ou Matrícula eSocial.
+    Também reconhece preenchimento manual no bloco de edição.
+    """
+    texto = texto or ""
+
+    padroes = [
+        r"9\s*[-:]?\s*(?:CTPS\s*/\s*Matr[ií]cula\s*eSocial|CTPS|Matr[ií]cula\s*eSocial|Matr[ií]cula)\s*[:\-]?\s*([0-9A-Z./\-]{3,40})",
+        r"CTPS\s*(?:\(.*?\))?\s*[:\-]?\s*([0-9A-Z./\-]{3,40})",
+        r"Matr[ií]cula(?:\s+do\s+Trabalhador)?(?:\s+no)?\s*eSocial\s*[:\-]?\s*([0-9A-Z./\-]{3,40})",
+        r"Matr[ií]cula\s*[:\-]?\s*([0-9A-Z./\-]{3,40})",
+    ]
+
+    for padrao in padroes:
+        m = re.search(padrao, texto, flags=re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+
+    return ""
+
+
+
 def analisar_campos(texto):
     texto_norm = normalizar(texto)
 
