@@ -1115,12 +1115,12 @@ def extrair_responsavel_tecnico(texto):
         "localizado": False
     }
 
-    cpfs = re.findall(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b", texto)
+    cpfs = re.findall(r"\b\d{3}\.?\d{3,6}\.?\d{2,6}-?\d{1,2}\b|\b\d{10,11}\b", texto)
     if cpfs:
         # normalmente o CPF do responsável vem depois do CPF do segurado
         dados["cpf"] = cpfs[-1]
 
-    registros = re.findall(r"\b\d{3,6}/[A-Z]{2}\b", texto)
+    registros = re.findall(r"\b(?:CRM|CREA|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:/[A-Z]{2})?\b|\b\d{3,6}/[A-Z]{2}\b", texto, flags=re.IGNORECASE)
     if registros:
         dados["registro"] = registros[-1]
 
@@ -1164,6 +1164,8 @@ def extrair_responsavel_tecnico(texto):
         "crea"
     ]):
         dados["profissao"] = "engenheiro de segurança do trabalho / engenheiro do trabalho"
+    elif "mte" in texto_norm:
+        dados["profissao"] = "profissional habilitado com registro MTE"
 
     if (
         dados["cpf"]
@@ -1172,6 +1174,7 @@ def extrair_responsavel_tecnico(texto):
         or dados["profissao"] != "não identificada claramente"
         or "crea" in texto_norm
         or "crm" in texto_norm
+        or "mte" in texto_norm
         or "engenheiro" in texto_norm
         or "medico do trabalho" in texto_norm
     ):
@@ -1375,24 +1378,67 @@ def extrair_responsaveis_ambientais_linhas(texto):
     bloco_16 = bloco_tabela_por_termos(
         texto,
         ["16 - respons", "16.1", "responsável pelos registros ambientais", "responsavel pelos registros ambientais"],
-        ["17 -", "17 ", "responsáveis pelas informações", "responsaveis pelas informacoes", "18 -", "18.1"],
+        ["17 -", "19 data", "20 representante", "responsáveis pelas informações", "responsaveis pelas informacoes", "18 -", "18.1"],
     ) if "bloco_tabela_por_termos" in globals() else []
     texto_base = "\n".join(bloco_16) if bloco_16 else texto
     linhas = [re.sub(r"\s+", " ", l).strip() for l in texto_base.splitlines() if l.strip()]
     responsaveis = []
 
-    # Padrão principal: período, opcional CPF, registro CRM/CREA, nome
+    registro_conselho = r"(?:(?:CRM|CREA|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:/[A-Z]{2})?|\d{3,8}/[A-Z]{2})"
+
+    # Padrão principal: período, opcional CPF/NIT, registro profissional, nome
     padroes = [
-        r"(?P<periodo>\d{2}/\d{4})\s+(?:(?P<cpf>\d{10,11})\s+)?(?P<registro>(?:CRM|CREA)\s*\.?\s*\d{2,6})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{5,80})",
-        r"(?P<periodo>\d{2}/\d{2}/\d{4}\s*a\s*\d{2}/\d{2}/\d{4})\s+(?:(?P<cpf>\d{10,11})\s+)?(?P<registro>(?:CRM|CREA)\s*\.?\s*\d{2,6})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{5,80})",
-        r"(?P<periodo>\d{2}/\d{2}/\d{4}\s+a\s+\d{2}/\d{2}/\d{4})\s+\|?(?P<cpf>\d{10,11})\s+(?P<registro>(?:CRM|CREA)\s*\.?\s*\d{2,6})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{5,80})",
+        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s*a)\s+(?P<cpf>[\d\.\-]{{8,20}})\s+(?P<registro>{registro_conselho})\s+\|?\s*(?P<nome>[^\n]{{5,80}})",
+        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s*a\s*(?:\d{{2}}/\d{{2}}/\d{{4}}|atual)?)\s+(?:(?P<cpf>[\d\.\-]{{8,20}})\s+)?(?P<registro>{registro_conselho})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{{5,80}})",
+        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s+a\s+(?:\d{{2}}/\d{{2}}/\d{{4}}|atual)?)\s+\|?(?P<cpf>[\d\.\-]{{8,20}})\s+(?P<registro>{registro_conselho})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{{5,80}})",
+        rf"(?P<periodo>(?<!\d{{2}}/)\d{{2}}/\d{{4}})\s+(?:(?P<cpf>[\d\.\-]{{8,20}})\s+)?(?P<registro>{registro_conselho})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{{5,80}})",
     ]
 
     texto_compacto = "\n".join(linhas)
 
+    padroes_linha = [
+        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s+a\s+\d{{2}}/\d{{2}}/\d{{4}})\s+(?P<cpf>[\d\.\-]{{8,20}})\s+(?P<registro>{registro_conselho})\s+(?P<nome>.+)$",
+        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s+a\s+atual)\s+(?P<cpf>[\d\.\-]{{8,20}})\s+(?P<registro>{registro_conselho})\s+(?P<nome>.+)$",
+        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s+a)\s+(?P<cpf>[\d\.\-]{{8,20}})\s+(?P<registro>{registro_conselho})\s+(?P<nome>.+)$",
+        rf"(?P<periodo>(?<!\d{{2}}/)\d{{2}}/\d{{4}})\s+(?:(?P<cpf>[\d\.\-]{{8,20}})\s+)?(?P<registro>{registro_conselho})\s+(?P<nome>.+)$",
+    ]
+    for linha in linhas:
+        if not re.search(r"\b(?:CRM|CREA|MTE)\b|\b\d{3,8}/[A-Z]{2}\b", linha, flags=re.IGNORECASE):
+            continue
+        for p_linha in padroes_linha:
+            m = re.search(p_linha, linha, flags=re.IGNORECASE)
+            if not m:
+                continue
+            periodo = re.sub(r"\s+", " ", m.group("periodo")).strip()
+            if re.search(r"\ba$", periodo, flags=re.IGNORECASE):
+                periodo = periodo + " atual"
+            cpf = (m.groupdict().get("cpf") or "").strip()
+            registro = re.sub(r"\s+", " ", m.group("registro")).strip()
+            nome = re.sub(r"\s+", " ", m.group("nome")).strip()
+            if "nome do profissional" in normalizar(nome) or "profissional legalmente" in normalizar(nome):
+                continue
+            reg_norm = normalizar(registro)
+            habilitacao = "médico do trabalho" if "crm" in reg_norm else (
+                "engenheiro de segurança do trabalho / engenheiro do trabalho" if "crea" in reg_norm else (
+                    "profissional habilitado com registro MTE" if "mte" in reg_norm else "não identificada claramente"
+                )
+            )
+            item = {
+                "periodo": periodo,
+                "cpf": cpf or "não localizado",
+                "registro": registro,
+                "nome": nome,
+                "habilitacao": habilitacao,
+            }
+            if item not in responsaveis:
+                responsaveis.append(item)
+            break
+
     for p in padroes:
         for m in re.finditer(p, texto_compacto, flags=re.IGNORECASE):
             periodo = re.sub(r"\s+", " ", m.group("periodo")).strip()
+            if re.search(r"\ba$", periodo, flags=re.IGNORECASE):
+                periodo = periodo + " atual"
             cpf = (m.groupdict().get("cpf") or "").strip()
             registro = re.sub(r"\s+", " ", m.group("registro")).strip()
             nome = re.sub(r"\s+", " ", m.group("nome")).strip()
@@ -1407,6 +1453,8 @@ def extrair_responsaveis_ambientais_linhas(texto):
                 habilitacao = "médico do trabalho"
             elif "crea" in reg_norm:
                 habilitacao = "engenheiro de segurança do trabalho / engenheiro do trabalho"
+            elif "mte" in reg_norm:
+                habilitacao = "profissional habilitado com registro MTE"
 
             item = {
                 "periodo": periodo,
@@ -1421,10 +1469,10 @@ def extrair_responsaveis_ambientais_linhas(texto):
 
     # Fallback para nomes/registros quando a linha veio quebrada
     if not responsaveis:
-        registros = re.findall(r"\b(?:CRM|CREA)\s*\.?\s*\d{2,6}\b", texto_base, flags=re.IGNORECASE)
+        registros = re.findall(r"\b(?:CRM|CREA|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:/[A-Z]{2})?\b|\b\d{3,8}/[A-Z]{2}\b", texto_base, flags=re.IGNORECASE)
         nomes = re.findall(r"(Dirceu\s+Francisco\s+de\s+Ara[uú]jo\s+Rodrigues|J[oô]natan\s+Ribeiro\s+Duarte|Jonatan\s+Ribeiro\s+Duarte|Marco\s+Aurelio\s+Goldenfum|Marco\s+Aur[eé]lio\s+Goldenfum)", texto_base, flags=re.IGNORECASE)
         periodos = re.findall(r"\b\d{2}/\d{4}\b|\b\d{2}/\d{2}/\d{4}\s*a\s*\d{2}/\d{2}/\d{4}\b", texto_base, flags=re.IGNORECASE)
-        cpfs = re.findall(r"\b\d{10,11}\b", texto_base)
+        cpfs = re.findall(r"\b\d{3}\.?\d{3,6}\.?\d{2,6}-?\d{1,2}\b|\b\d{10,11}\b", texto_base)
 
         max_len = max(len(registros), len(nomes), len(periodos), 1)
         for i in range(max_len):
@@ -1434,8 +1482,11 @@ def extrair_responsaveis_ambientais_linhas(texto):
             cpf = cpfs[i] if i < len(cpfs) else ""
 
             if registro or nome or periodo:
-                habilitacao = "médico do trabalho" if "crm" in normalizar(registro) else (
-                    "engenheiro de segurança do trabalho / engenheiro do trabalho" if "crea" in normalizar(registro) else "não identificada claramente"
+                reg_norm = normalizar(registro)
+                habilitacao = "médico do trabalho" if "crm" in reg_norm else (
+                    "engenheiro de segurança do trabalho / engenheiro do trabalho" if "crea" in reg_norm else (
+                        "profissional habilitado com registro MTE" if "mte" in reg_norm else "não identificada claramente"
+                    )
                 )
                 responsaveis.append({
                     "periodo": periodo or "não localizado",
@@ -1572,7 +1623,8 @@ def valor_manual_campo_linha(texto, numero, linha=None):
         padrao = rf"(?im)^\s*{re.escape(numero)}\s*-\s*[^:\n]*\|\s*linha\s*{linha}\s*:\s*(.*?)\s*$"
         m = re.search(padrao, texto)
         if m:
-            return m.group(1).strip()
+            valor = m.group(1).strip()
+            return valor if valor_manual_preenchido(valor) else ""
     return valor_manual_campo(texto, numero)
 
 
@@ -1581,8 +1633,11 @@ def linhas_manuais_por_campo(texto, numeros):
     for numero in numeros:
         padrao = rf"(?im)^\s*{re.escape(numero)}\s*-\s*[^:\n]*\|\s*linha\s*(\d+)\s*:\s*(.*?)\s*$"
         for m in re.finditer(padrao, texto or ""):
+            valor = m.group(2).strip()
+            if not valor_manual_preenchido(valor):
+                continue
             idx = int(m.group(1))
-            linhas.setdefault(idx, {})[numero] = m.group(2).strip()
+            linhas.setdefault(idx, {})[numero] = valor
     return linhas
 
 
@@ -1622,6 +1677,35 @@ def extrair_valor_escalar_estruturado(texto, campo):
         manual = valor_manual_campo(texto, numero)
         if manual:
             return manual
+        if numero == "17":
+            manual19 = valor_manual_campo(texto, "19")
+            if manual19:
+                return manual19
+            bloco_17 = bloco_tabela_por_termos(
+                texto,
+                ["17 data", "17 - data", "data da emissão do ppp", "data de emissão do ppp", "data emissão ppp", "data emissao ppp"],
+                ["18 representante", "18 - representante", "19 ", "20 "],
+            )
+            m_bloco_17 = re.search(r"\b\d{2}/\d{2}/\d{4}\b", "\n".join(bloco_17))
+            if m_bloco_17:
+                return m_bloco_17.group(0)
+            m19 = re.search(r"(?is)(?:19\s*[-.:]?\s*)?Data\s*de\s*Emiss[aã]o\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})", texto or "")
+            if m19:
+                return m19.group(1)
+            m19_proximo = re.search(r"(?is)\b19\b.{0,40}Data\s*de\s*Emiss[aã]o.{0,80}?(\d{2}/\d{2}/\d{4})", texto or "")
+            if m19_proximo:
+                return m19_proximo.group(1)
+            m19_generico = re.search(r"(?is)\b19\b.{0,140}?(\d{2}/\d{2}/\d{4})", texto or "")
+            if m19_generico:
+                return m19_generico.group(1)
+            bloco_19 = bloco_tabela_por_termos(
+                texto,
+                ["19 data de emissão", "19 data de emissao", "data de emissão", "data de emissao"],
+                ["20 representante", "representante legal", "observações", "observacoes"],
+            )
+            m_bloco_19 = re.search(r"\b\d{2}/\d{2}/\d{4}\b", "\n".join(bloco_19))
+            if m_bloco_19:
+                return m_bloco_19.group(0)
         rotulo = trecho_apos_rotulo(texto, numero, campo["nome"], campo.get("termos"))
         data = re.search(r"\b\d{2}/\d{2}/\d{4}\b", rotulo)
         return data.group(0) if data else rotulo
@@ -1844,8 +1928,57 @@ def montar_linhas_compostas(texto, campo):
 
     if campo["numero"] == "18":
         manual18 = valor_manual_campo(texto, "18")
-        cpf = valor_manual_campo(texto, "18.1") or extrair_cpf_ou_nit(manual18)
-        nome = valor_manual_campo(texto, "18.2")
+        bloco_18 = bloco_tabela_por_termos(
+            texto,
+            ["18 representante legal", "18 - representante legal", "representante legal da empresa"],
+            ["19 ", "20 ", "observações", "observacoes", "assinatura"],
+        )
+        texto_18 = "\n".join(bloco_18)
+        cpf = (
+            valor_manual_campo(texto, "18.1")
+            or valor_manual_campo(texto, "20.1")
+            or extrair_cpf_ou_nit(manual18)
+        )
+        nome = valor_manual_campo(texto, "18.2") or valor_manual_campo(texto, "20.2")
+        if not cpf:
+            m_cpf18 = re.search(r"18\.1\s*(?:NIT|CPF)?[^\d]{0,30}([\d\.\-]{8,20})", texto_18, flags=re.IGNORECASE)
+            if m_cpf18:
+                cpf = m_cpf18.group(1)
+        if not nome:
+            m_nome18 = re.search(r"18\.2\s*Nome\s*[:\-]?\s*([^\n\r|]+)", texto_18, flags=re.IGNORECASE)
+            if m_nome18:
+                nome = re.sub(r"\s+", " ", m_nome18.group(1)).strip(" -:|")
+                if "representante legal" in normalizar(nome) or normalizar(nome) == "do":
+                    nome = ""
+            if not nome:
+                linhas_18 = [l.strip() for l in texto_18.splitlines() if l.strip()]
+                for idx_linha, linha_18 in enumerate(linhas_18):
+                    if "18.2" in linha_18 or ("nome" in normalizar(linha_18) and "representante" in normalizar(linha_18)):
+                        if idx_linha + 1 < len(linhas_18):
+                            candidato = re.sub(r"\s+", " ", linhas_18[idx_linha + 1]).strip(" -:|")
+                            if candidato and "carimbo" not in normalizar(candidato) and "assinatura" not in normalizar(candidato):
+                                nome = candidato
+                                break
+        bloco_20 = bloco_tabela_por_termos(
+            texto,
+            ["20 representante legal", "20 - representante legal", "representante legal da empresa"],
+            ["observações", "observacoes", "assinatura"],
+        )
+        texto_20 = "\n".join(bloco_20)
+        if not cpf:
+            m_cpf = re.search(r"\b\d{3}\.?\d{3,6}\.?\d{2,6}-?\d{1,2}\b", texto_20)
+            if m_cpf:
+                cpf = m_cpf.group(0)
+        if not nome:
+            m_nome_20 = re.search(r"20\.2\s*Nome\s*([^\n\r]+)", texto_20, flags=re.IGNORECASE)
+            m_nome = m_nome_20 or re.search(r"\bNome\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç\s]{5,80})", texto_20)
+            if m_nome:
+                nome = re.sub(r"\s+", " ", m_nome.group(1)).strip(" -:|")
+            else:
+                nomes = re.findall(r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+){1,5}\b", texto_20)
+                nomes = [n for n in nomes if "representante legal" not in normalizar(n)]
+                if nomes:
+                    nome = nomes[-1]
         if manual18 or cpf or nome:
             manuais.setdefault(1, {})
             if cpf:
@@ -1873,7 +2006,7 @@ def montar_linhas_compostas(texto, campo):
             if not valor and numero == "15.9":
                 valor = "ver subitens" if any(dados.get(n) for n, _ in subcampos if n.startswith("15.9 [")) else ""
             subdados[numero] = {"nome": nome, "valor": valor}
-            if not valor:
+            if valor_ausente_estrutural(valor):
                 incompletos.append(numero)
         linhas.append({
             "linha": idx,
@@ -1954,7 +2087,20 @@ def campo_estruturado_para_resultado(campo, texto):
     }
 
 
+def valor_ausente_estrutural(valor):
+    v = normalizar(str(valor or "")).strip()
+    return not v or v in {
+        "nao localizado",
+        "nao localizada",
+        "nao extraido",
+        "nao extraida",
+        "nao identificado",
+        "nao identificada",
+    }
+
+
 def analisar_campos(texto):
+    texto = limpar_placeholders_manuais_vazios(texto)
     return [campo_estruturado_para_resultado(campo, texto) for campo in PPP_CAMPOS_ESTRUTURADOS]
 
 def analisar_agentes(texto):
@@ -2192,6 +2338,7 @@ def coletar_base_legal_utilizada(falhas, agentes, epi, ltcat):
 
 
 def gerar_parecer(texto, trf):
+    texto = limpar_placeholders_manuais_vazios(texto)
     datas = extrair_datas(texto)
     cnae = extrair_cnae(texto)
     data_admissao = extrair_data_admissao(texto)
@@ -2398,195 +2545,5 @@ def valor_manual_campo(texto, numero):
     """
     padrao = rf"(?im)^\s*{re.escape(numero)}\s*[-:]\s*[^:\n]*:\s*(.+?)\s*$"
     m = re.search(padrao, texto or "")
-    if m:
-        return m.group(1).strip()
-    return ""
-
-
-def campo_tem_valor(texto, numero, descricao):
-    """
-    Verifica se um campo está suficientemente lido.
-    Não basta existir o número do campo; precisa existir valor ou extração específica.
-    """
-    texto = texto or ""
-    texto_norm = normalizar(texto)
-
-    # Se o usuário preencheu manualmente, considera localizado.
-    if valor_manual_campo(texto, numero):
-        return True
-
-    if numero == "1":
-        return bool(re.search(r"\b\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\b", texto))
-    if numero == "3":
-        return bool(extrair_cnae(texto))
-    if numero == "6":
-        return bool(extrair_cpf_ou_nit(texto))
-    if numero == "9":
-        return bool(extrair_campo9_ctps_ou_esocial(texto))
-    if numero == "10":
-        return bool(extrair_data_admissao(texto))
-    if numero == "15.2":
-        return bool(extrair_tipo_15_2(texto))
-    if numero == "15.6":
-        return bool(extrair_epc_15_6(texto))
-    if numero == "16":
-        return extrair_responsavel_tecnico(texto).get("localizado", False)
-    if numero == "16.2":
-        return bool(re.search(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b", texto) or re.search(r"\b\d{10,11}\b", texto))
-    if numero == "16.3":
-        return bool(re.search(r"\b(?:CRM|CREA)?\s*\.?\s*\d{2,6}/?[A-Z]{0,2}\b", texto, flags=re.IGNORECASE))
-    if numero == "16.4":
-        resp = extrair_responsavel_tecnico(texto)
-        return bool(resp.get("nome"))
-    if numero == "17":
-        return "data de emissao" in texto_norm or "data de emissão" in texto.lower() or bool(extrair_datas(texto))
-    if numero == "18":
-        return any(x in texto_norm for x in ["representante legal", "assinatura", "assinado"])
-
-    # Verificação genérica: descrição ou termos próximos encontrados
-    desc_norm = normalizar(descricao)
-    if desc_norm in texto_norm:
-        return True
-
-    return False
-
-
-def preparar_texto_editavel(texto):
-    """
-    Acrescenta ao fim do texto extraído um bloco com qualquer campo analisado
-    que não tenha sido lido com valor suficiente. O usuário pode preencher
-    manualmente e clicar de novo em Gerar Raio-X do PPP.
-    """
-    texto = texto or ""
-
-    # Evita duplicar o bloco se o usuário reabrir ou reanalisar.
-    if MARCADOR_CAMPOS_MANUAIS in texto:
-        return texto
-
-    faltantes = []
-    campos = analisar_campos(texto)
-    for campo in campos:
-        if campo.get("linhas"):
-            for linha in campo["linhas"]:
-                for numero in linha.get("campos_incompletos", []):
-                    dados = linha["subcampos"].get(numero, {})
-                    faltantes.append(placeholder_manual(numero, dados.get("nome", campo["nome"]), linha["linha"]))
-        elif campo["status"] == "INCOMPLETO":
-            faltantes.append(placeholder_manual(campo["numero"], campo["nome"]))
-
-    if not faltantes:
-        return texto
-
-    bloco = (
-        "\n\n"
-        f"{MARCADOR_CAMPOS_MANUAIS}\n"
-        "Preencha somente os campos que conseguir confirmar no PPP original. Depois clique novamente em GERAR RAIO-X DO PPP.\n\n"
-        + "\n".join(faltantes)
-        + "\n"
-    )
-
-    return texto.rstrip() + bloco
-
-
-# ============================================================
-# INTERFACE STREAMLIT
-# ============================================================
-
-st.title("📄 Raio-X do PPP – PróBenefício")
-st.caption("Análise campo a campo do PPP conforme IN 128/2022, Decreto 3.048/99, NR-15, Temas STF/STJ/TNU e IRDR/TRF4.")
-
-with st.sidebar:
-    st.header("Configuração")
-    trf = st.selectbox("TRF de competência", ["TRF1", "TRF2", "TRF3", "TRF4", "TRF5", "TRF6"], index=3)
-    st.info("O sistema não armazena dados. A análise ocorre durante a sessão.")
-
-uploaded_file = st.file_uploader("Carregue o PPP em PDF", type=["pdf"])
-
-texto_manual = st.text_area("Ou cole manualmente o texto extraído do PPP", height=180)
-
-texto_final = ""
-
-if uploaded_file:
-    with st.spinner("Extraindo texto do PPP..."):
-        texto_final = extrair_texto_pdf(uploaded_file)
-        texto_final = preparar_texto_editavel(texto_final)
-    st.success("PDF carregado e texto extraído. Revise e complete manualmente os campos faltantes, se necessário.")
-elif texto_manual.strip():
-    texto_final = preparar_texto_editavel(texto_manual)
-
-if texto_final:
-    with st.expander("Ver texto extraído / editável", expanded=True):
-        st.info("Se algum campo não foi lido, preencha no bloco 'CAMPOS NÃO LIDOS PELO OCR' e clique novamente em Gerar Raio-X do PPP.")
-        texto_final = st.text_area("Texto base da análise", value=texto_final, height=420)
-
-if st.button("🚀 Gerar Raio-X do PPP", use_container_width=True):
-    if not texto_final.strip():
-        st.error("Envie um PDF ou cole o texto do PPP.")
-    else:
-        relatorio, campos, agentes, epi, ltcat, classificacao = gerar_parecer(texto_final, trf)
-
-        st.divider()
-        st.header("📋 Resultado Executivo")
-        if "FALHAS RELEVANTES" in classificacao:
-            st.error(classificacao)
-        elif "RISCO" in classificacao:
-            st.warning(classificacao)
-        else:
-            st.success(classificacao)
-
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Campos analisados", len(campos))
-        with c2:
-            st.metric("Agentes identificados", len(agentes))
-        with c3:
-            falhas_count = len([c for c in campos if c["criticidade"] in ["CRÍTICA", "GRAVE", "MODERADA"]]) + len(epi) + len(ltcat)
-            st.metric("Alertas", falhas_count)
-
-        st.subheader("🔎 Agentes nocivos identificados")
-        if agentes:
-            for a in agentes:
-                st.write(f"- **{a['agente'].upper()}** ({a['grupo']}) — {a['enquadramento']}")
-        else:
-            st.warning("Nenhum agente nocivo identificado automaticamente.")
-
-        st.subheader("⚠️ Checklist de campos")
-        for c in campos:
-            if c.get("linhas"):
-                if c["status"] == "INCOMPLETO":
-                    st.warning(f"Campo {c['campo']} — {c['nome']}: {c['criticidade']} — há linha/subcampo incompleto")
-                else:
-                    st.success(f"Campo {c['campo']} — {c['nome']}: localizado")
-                with st.expander(f"Detalhes estruturados do Campo {c['campo']}", expanded=False):
-                    for linha in c["linhas"]:
-                        st.write(f"**Linha {linha['linha']} — {linha['status']}**")
-                        for numero, dados in linha["subcampos"].items():
-                            valor = dados.get("valor") or "não extraído"
-                            st.write(f"- {numero} — {dados['nome']}: {valor}")
-            elif c.get("valor"):
-                st.success(f"Campo {c['campo']} — {c['nome']}: localizado — {c['valor']}")
-            elif c["status"].startswith("AUSENTE"):
-                if c["criticidade"] == "CRÍTICA":
-                    st.error(f"Campo {c['campo']} — {c['nome']}: {c['criticidade']}")
-                elif c["criticidade"] == "GRAVE":
-                    st.warning(f"Campo {c['campo']} — {c['nome']}: {c['criticidade']}")
-                else:
-                    st.info(f"Campo {c['campo']} — {c['nome']}: {c['criticidade']}")
-            elif c["status"] == "INCOMPLETO":
-                if c["criticidade"] == "CRÍTICA":
-                    st.error(f"Campo {c['campo']} — {c['nome']}: {c['criticidade']}")
-                elif c["criticidade"] == "GRAVE":
-                    st.warning(f"Campo {c['campo']} — {c['nome']}: {c['criticidade']}")
-                else:
-                    st.info(f"Campo {c['campo']} — {c['nome']}: {c['criticidade']}")
-
-        st.subheader("📄 Parecer técnico completo")
-        st.text_area("Parecer para copiar", relatorio, height=650)
-
-        st.download_button(
-            "⬇️ Baixar parecer em TXT",
-            data=relatorio,
-            file_name="raio_x_ppp_parecer.txt",
-            mime="text/plain",
             use_container_width=True
         )
