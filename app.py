@@ -457,6 +457,203 @@ CAMPOS_PPP = [
 ]
 
 
+
+# ============================================================
+# BASE JURISPRUDENCIAL — TRFs, STF, STJ e CRPS
+# Fonte interna: IRDR_Aposentadoria_Especial.docx
+# ============================================================
+
+BASE_TRIBUNAIS = {
+    "NACIONAL": {
+        "STF Tema 555": (
+            "EPI e ruído: a declaração de EPI eficaz no PPP não descaracteriza "
+            "o tempo especial quando houver exposição a ruído acima dos limites legais."
+        ),
+        "STF Tema 709": (
+            "É constitucional a vedação de continuidade da aposentadoria especial se o beneficiário "
+            "permanece ou retorna ao labor nocivo. A DER permanece como marco dos efeitos financeiros "
+            "quando o segurado aguardava a implantação do benefício."
+        ),
+        "STF Tema 942": (
+            "É garantido o direito adquirido à conversão de tempo especial em comum "
+            "para períodos trabalhados antes da EC 103/2019."
+        ),
+        "STJ Tema 534": (
+            "Eletricidade superior a 250 volts pode caracterizar atividade especial, "
+            "pois o rol de agentes nocivos é exemplificativo."
+        ),
+        "STJ Tema 694": (
+            "Limites históricos de ruído: acima de 80 dB até 05/03/1997; "
+            "acima de 90 dB de 06/03/1997 a 18/11/2003; "
+            "acima de 85 dB a partir de 19/11/2003."
+        ),
+        "STJ Tema 998": (
+            "Auxílio-doença intercalado com atividade especial deve ser computado "
+            "como tempo especial."
+        ),
+        "STJ Tema 1.090": (
+            "EPI e ineficácia presumida: nacionalizou as hipóteses do IRDR 15/TRF4, "
+            "incluindo ruído acima do limite, agentes cancerígenos, agentes biológicos "
+            "em ambiente hospitalar/laboratorial, agentes sem limite seguro e hipóteses "
+            "em que o próprio INSS reconhecia a ineficácia do EPI."
+        ),
+        "CRPS Enunciado 11": (
+            "O PPP é documento suficiente para comprovação da especialidade em regra. "
+            "Exceções importantes: ruído, frio e calor podem exigir LTCAT conforme o período."
+        ),
+        "CRPS Enunciado 12": (
+            "O fornecimento de EPI não descaracteriza por si só a atividade especial; "
+            "deve ser analisado todo o ambiente de trabalho e a real neutralização."
+        ),
+        "CRPS Enunciado 13": (
+            "Ruído: consolida limites históricos e critérios de metodologia, em convergência "
+            "com o STJ Tema 694."
+        ),
+        "CRPS Enunciado 14": (
+            "Enquadramento por categoria profissional até 28/04/1995 nos Decretos 53.831/64 "
+            "e 83.080/79. Após 29/04/1995 exige-se comprovação da efetiva exposição."
+        ),
+        "CRPS Enunciado 15": (
+            "Conversão de tempo especial em comum admitida para períodos trabalhados "
+            "até 13/11/2019."
+        ),
+    },
+
+    "TRF1": {
+        "síntese": (
+            "TRF1 segue precedentes nacionais do STF e STJ. Aplica Tema 555/STF para ruído, "
+            "Tema 534/STJ para eletricidade, STJ Tema 1.090 para biológicos e cancerígenos."
+        )
+    },
+
+    "TRF2": {
+        "síntese": (
+            "TRF2 segue STF/STJ. Reconhece ruído pelo Tema 555/STF, eletricidade pelo Tema 534/STJ, "
+            "vibração como agente físico e agentes biológicos em atividades de saúde."
+        )
+    },
+
+    "TRF3": {
+        "síntese": (
+            "TRF3 aplica Tema 555/STF e Tema 694/STJ para ruído, reconhece eletricidade, calor, "
+            "radiações e agentes químicos com base em laudo técnico e rol exemplificativo."
+        )
+    },
+
+    "TRF4": {
+        "IRDR 15": (
+            "IRDR 15/TRF4: EPI não afasta automaticamente a especialidade em hipóteses como "
+            "ruído acima dos limites, agentes cancerígenos, agentes biológicos e agentes sem "
+            "limite seguro. Tese incorporada nacionalmente pelo STJ Tema 1.090."
+        ),
+        "IRDR 16": (
+            "IRDR 16/TRF4: auxílio-doença intercalado com atividade especial deve ser computado "
+            "como tempo especial, em convergência com STJ Tema 998."
+        ),
+    },
+
+    "TRF5": {
+        "síntese": (
+            "TRF5 acompanha precedentes nacionais. Reconhece agentes biológicos, calor, ruído, "
+            "enquadramento anterior a 28/04/1995 e agentes químicos cancerígenos conforme STJ Tema 1.090."
+        )
+    },
+
+    "TRF6": {
+        "síntese": (
+            "TRF6 aplica STF/STJ. Reconhece fumos metálicos, hidrocarbonetos e cancerígenos com base "
+            "no STJ Tema 1.090; ruído pelo Tema 555/STF e eletricidade pelo Tema 534/STJ."
+        )
+    },
+}
+
+
+def selecionar_base_tribunal(trf, agentes, texto):
+    """
+    Seleciona apenas a base jurisprudencial aplicável ao caso concreto.
+    Não despeja toda a base legal.
+    """
+    bases = []
+
+    texto_norm = normalizar(texto)
+    grupos = [normalizar(a.get("grupo", "")) for a in agentes]
+    nomes_agentes = [normalizar(a.get("agente", "")) for a in agentes]
+
+    tem_fisico = any("fisic" in g for g in grupos)
+    tem_quimico = any("quim" in g for g in grupos)
+    tem_biologico = any("biologic" in g for g in grupos)
+
+    tem_ruido = (
+        "ruido" in texto_norm
+        or "ruído" in texto.lower()
+        or any("ruido" in n for n in nomes_agentes)
+        or "db" in texto_norm
+        or "dba" in texto_norm
+    )
+
+    tem_eletricidade = (
+        "eletricidade" in texto_norm
+        or "tensao eletrica" in texto_norm
+        or "tensão elétrica" in texto.lower()
+        or "250v" in texto_norm
+        or "250 v" in texto_norm
+    )
+
+    tem_cancerigeno = any(
+        termo in texto_norm
+        for termo in [
+            "benzeno", "amianto", "asbesto", "silica", "sílica",
+            "hidrocarboneto aromatico", "hidrocarboneto aromático",
+            "cancerigeno", "cancerígeno", "linach", "iarc"
+        ]
+    )
+
+    tem_auxilio = "auxilio-doenca" in texto_norm or "auxílio-doença" in texto.lower()
+
+    tem_periodo_pre_reforma = any(
+        ano in texto_norm
+        for ano in [
+            "1964", "1979", "1980", "1985", "1990", "1995", "1997",
+            "1999", "2003", "2007", "2010", "2015", "2018", "2019"
+        ]
+    )
+
+    if tem_ruido:
+        bases.append(("STF Tema 555", BASE_TRIBUNAIS["NACIONAL"]["STF Tema 555"]))
+        bases.append(("STJ Tema 694", BASE_TRIBUNAIS["NACIONAL"]["STJ Tema 694"]))
+        bases.append(("CRPS Enunciado 13", BASE_TRIBUNAIS["NACIONAL"]["CRPS Enunciado 13"]))
+
+    if tem_eletricidade:
+        bases.append(("STJ Tema 534", BASE_TRIBUNAIS["NACIONAL"]["STJ Tema 534"]))
+
+    if tem_biologico or tem_quimico or tem_cancerigeno:
+        bases.append(("STJ Tema 1.090", BASE_TRIBUNAIS["NACIONAL"]["STJ Tema 1.090"]))
+        bases.append(("CRPS Enunciado 11", BASE_TRIBUNAIS["NACIONAL"]["CRPS Enunciado 11"]))
+        bases.append(("CRPS Enunciado 12", BASE_TRIBUNAIS["NACIONAL"]["CRPS Enunciado 12"]))
+
+    if tem_periodo_pre_reforma:
+        bases.append(("STF Tema 942", BASE_TRIBUNAIS["NACIONAL"]["STF Tema 942"]))
+        bases.append(("CRPS Enunciado 15", BASE_TRIBUNAIS["NACIONAL"]["CRPS Enunciado 15"]))
+
+    if tem_auxilio:
+        bases.append(("STJ Tema 998", BASE_TRIBUNAIS["NACIONAL"]["STJ Tema 998"]))
+
+    # Tema 709 só deve aparecer se houver informação de aposentadoria especial/retorno ou orientação final ampla.
+    if "retorno ao labor nocivo" in texto_norm or "aposentadoria especial" in texto_norm:
+        bases.append(("STF Tema 709", BASE_TRIBUNAIS["NACIONAL"]["STF Tema 709"]))
+
+    if trf in BASE_TRIBUNAIS:
+        for titulo, fundamento in BASE_TRIBUNAIS[trf].items():
+            bases.append((f"{trf} — {titulo}", fundamento))
+
+    unicos = []
+    for item in bases:
+        if item not in unicos:
+            unicos.append(item)
+
+    return unicos
+
+
 AGENTES = {
     "ruido": {
         "grupo": "Físico",
@@ -1065,6 +1262,241 @@ def extrair_campo9_ctps_ou_esocial(texto):
 
 
 
+
+# ============================================================
+# ANÁLISE DE CAMPOS COMPOSTOS: 15.9 E 16
+# ============================================================
+
+def extrair_subitens_159(texto):
+    """
+    Extrai e analisa os subitens do campo 15.9:
+    15.9 [01] ... S/N
+    15.9 [02] ... S/N
+    15.9 [03] ... S/N
+    15.9 [04] ... S/N
+    15.9 [05] ... S/N
+
+    O OCR pode quebrar linhas. A função trabalha com busca ampla por palavras-chave.
+    """
+    texto = texto or ""
+    tn = normalizar(texto)
+
+    subitens = [
+        {
+            "codigo": "15.9 [01]",
+            "descricao": "Tentativa de implementação de medidas de proteção coletiva, administrativa ou de organização do trabalho antes do EPI.",
+            "termos": ["medidas de protecao coletiva", "proteção coletiva", "carater administrativo", "organização do trabalho", "organizacao do trabalho", "inviabilidade tecnica", "insuficiencia", "interinidade", "emergencial"],
+        },
+        {
+            "codigo": "15.9 [02]",
+            "descricao": "Funcionamento e uso ininterrupto do EPI ao longo do tempo, conforme especificação técnica do fabricante.",
+            "termos": ["funcionamento", "uso ininterrupto", "especificacao tecnica", "especificação técnica", "fabricante"],
+        },
+        {
+            "codigo": "15.9 [03]",
+            "descricao": "Observância do prazo de validade conforme Certificado de Aprovação (CA).",
+            "termos": ["prazo de validade", "certificado de aprovacao", "certificado de aprovação", "ca do mte", "ca"],
+        },
+        {
+            "codigo": "15.9 [04]",
+            "descricao": "Periodicidade de troca definida nos programas ambientais, comprovada por recibo.",
+            "termos": ["periodicidade de troca", "programas ambientais", "recibo", "usuario", "usuário"],
+        },
+        {
+            "codigo": "15.9 [05]",
+            "descricao": "Higienização do EPI.",
+            "termos": ["higienizacao", "higienização"],
+        },
+    ]
+
+    resultados = []
+
+    # Procura menções globais a SIM/NÃO na área 15.9. Não tenta vincular com 100% de certeza quando o OCR vem em tabela,
+    # mas marca se o subitem foi lido e se há resposta positiva/negativa no trecho.
+    for item in subitens:
+        termos_norm = [normalizar(t) for t in item["termos"]]
+        localizado = any(t in tn for t in termos_norm)
+
+        status = "NÃO LOCALIZADO"
+        resposta = "não extraída"
+
+        if localizado:
+            status = "LOCALIZADO"
+            # Janela aproximada ao redor do primeiro termo encontrado
+            posicoes = [tn.find(t) for t in termos_norm if tn.find(t) != -1]
+            pos = min(posicoes) if posicoes else 0
+            janela = tn[max(0, pos - 300): pos + 500]
+
+            if "nao" in janela or "não" in janela:
+                resposta = "Não"
+            elif re.search(r"\bsim\b", janela):
+                resposta = "Sim"
+            else:
+                resposta = "não extraída"
+
+        resultados.append({
+            "codigo": item["codigo"],
+            "descricao": item["descricao"],
+            "status": status,
+            "resposta": resposta,
+            "fundamento": "IN 128/2022, art. 284; NR-06; NR-01. A eficácia do EPI depende da comprovação dos requisitos de proteção, fornecimento, uso, troca, validade, higienização e fiscalização.",
+        })
+
+    # Acrescenta análise específica de campos compostos/tabelados.
+    try:
+        resultados.extend(analisar_campos_compostos_159_16(texto))
+    except Exception as e:
+        resultados.append({
+            "campo": "15.9/16",
+            "nome": "Campos compostos/tabelados",
+            "status": "ERRO NA ANÁLISE COMPLEMENTAR",
+            "criticidade": "MODERADA",
+            "valor": "",
+            "falha": f"Não foi possível analisar campos compostos automaticamente: {e}",
+            "verificacao": "Conferir manualmente campos 15.9 e 16.",
+            "fundamento": "IN 128/2022, arts. 284 e 285.",
+            "estrategia": "Preencher manualmente as linhas ausentes no texto editável."
+        })
+
+    return resultados
+
+
+def extrair_responsaveis_ambientais_linhas(texto):
+    """
+    Tenta estruturar as linhas do Campo 16:
+    16.1 Período | 16.2 CPF/NIT | 16.3 Registro | 16.4 Nome.
+
+    Aceita linhas incompletas, por exemplo:
+    06/2008 | CPF vazio | CRM 4732 | Nome
+    """
+    texto = texto or ""
+    linhas = [re.sub(r"\s+", " ", l).strip() for l in texto.splitlines() if l.strip()]
+    responsaveis = []
+
+    # Padrão principal: período, opcional CPF, registro CRM/CREA, nome
+    padroes = [
+        r"(?P<periodo>\d{2}/\d{4})\s+(?:(?P<cpf>\d{10,11})\s+)?(?P<registro>(?:CRM|CREA)\s*\.?\s*\d{2,6})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{5,80})",
+        r"(?P<periodo>\d{2}/\d{2}/\d{4}\s*a\s*\d{2}/\d{2}/\d{4})\s+(?:(?P<cpf>\d{10,11})\s+)?(?P<registro>(?:CRM|CREA)\s*\.?\s*\d{2,6})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{5,80})",
+        r"(?P<periodo>\d{2}/\d{2}/\d{4}\s+a\s+\d{2}/\d{2}/\d{4})\s+\|?(?P<cpf>\d{10,11})\s+(?P<registro>(?:CRM|CREA)\s*\.?\s*\d{2,6})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{5,80})",
+    ]
+
+    texto_compacto = "\n".join(linhas)
+
+    for p in padroes:
+        for m in re.finditer(p, texto_compacto, flags=re.IGNORECASE):
+            periodo = re.sub(r"\s+", " ", m.group("periodo")).strip()
+            cpf = (m.groupdict().get("cpf") or "").strip()
+            registro = re.sub(r"\s+", " ", m.group("registro")).strip()
+            nome = re.sub(r"\s+", " ", m.group("nome")).strip()
+
+            # Evita capturar cabeçalhos
+            if "nome do profissional" in normalizar(nome):
+                continue
+
+            habilitacao = "não identificada claramente"
+            reg_norm = normalizar(registro)
+            if "crm" in reg_norm:
+                habilitacao = "médico do trabalho"
+            elif "crea" in reg_norm:
+                habilitacao = "engenheiro de segurança do trabalho / engenheiro do trabalho"
+
+            item = {
+                "periodo": periodo,
+                "cpf": cpf or "não localizado",
+                "registro": registro,
+                "nome": nome,
+                "habilitacao": habilitacao,
+            }
+
+            if item not in responsaveis:
+                responsaveis.append(item)
+
+    # Fallback para nomes/registros quando a linha veio quebrada
+    if not responsaveis:
+        registros = re.findall(r"\b(?:CRM|CREA)\s*\.?\s*\d{2,6}\b", texto, flags=re.IGNORECASE)
+        nomes = re.findall(r"(Dirceu\s+Francisco\s+de\s+Ara[uú]jo\s+Rodrigues|J[oô]natan\s+Ribeiro\s+Duarte|Jonatan\s+Ribeiro\s+Duarte)", texto, flags=re.IGNORECASE)
+        periodos = re.findall(r"\b\d{2}/\d{4}\b|\b\d{2}/\d{2}/\d{4}\s*a\s*\d{2}/\d{2}/\d{4}\b", texto, flags=re.IGNORECASE)
+        cpfs = re.findall(r"\b\d{10,11}\b", texto)
+
+        max_len = max(len(registros), len(nomes), len(periodos), 1)
+        for i in range(max_len):
+            registro = registros[i] if i < len(registros) else ""
+            nome = nomes[i] if i < len(nomes) else ""
+            periodo = periodos[i] if i < len(periodos) else ""
+            cpf = cpfs[i] if i < len(cpfs) else ""
+
+            if registro or nome or periodo:
+                habilitacao = "médico do trabalho" if "crm" in normalizar(registro) else (
+                    "engenheiro de segurança do trabalho / engenheiro do trabalho" if "crea" in normalizar(registro) else "não identificada claramente"
+                )
+                responsaveis.append({
+                    "periodo": periodo or "não localizado",
+                    "cpf": cpf or "não localizado",
+                    "registro": registro or "não localizado",
+                    "nome": nome or "não localizado",
+                    "habilitacao": habilitacao,
+                })
+
+    return responsaveis
+
+
+def analisar_campos_compostos_159_16(texto):
+    """
+    Gera achados técnicos específicos para os campos compostos 15.9 e 16.
+    """
+    achados = []
+
+    subitens = extrair_subitens_159(texto)
+    for s in subitens:
+        criticidade = "OK" if s["status"] == "LOCALIZADO" else "MODERADA"
+        if s["resposta"] == "Não":
+            criticidade = "GRAVE"
+
+        achados.append({
+            "campo": s["codigo"],
+            "nome": s["descricao"],
+            "status": f"{s['status']} | Resposta: {s['resposta']}",
+            "criticidade": criticidade,
+            "valor": s["resposta"],
+            "falha": "" if criticidade == "OK" else f"{s['codigo']} não comprovado de forma suficiente ou consta como negativo.",
+            "verificacao": s["descricao"],
+            "fundamento": s["fundamento"],
+            "estrategia": "Conferir fichas de EPI, CA, recibos, treinamento, higienização, troca e LTCAT."
+        })
+
+    responsaveis = extrair_responsaveis_ambientais_linhas(texto)
+    if responsaveis:
+        for idx, r in enumerate(responsaveis, start=1):
+            achados.append({
+                "campo": f"16.{idx}",
+                "nome": "Linha do responsável pelos registros ambientais",
+                "status": "CONFORME/LOCALIZADO",
+                "criticidade": "OK" if r["periodo"] != "não localizado" and r["registro"] != "não localizado" and r["nome"] != "não localizado" else "GRAVE",
+                "valor": (
+                    f"Período: {r['periodo']} | CPF/NIT: {r['cpf']} | Registro: {r['registro']} | "
+                    f"Nome: {r['nome']} | Habilitação: {r['habilitacao']}"
+                ),
+                "falha": "",
+                "verificacao": "Cada linha do Campo 16 deve vincular período, CPF/NIT, registro profissional e nome do responsável técnico.",
+                "fundamento": "IN 128/2022, art. 285; CLT, art. 195. Os registros ambientais devem estar vinculados a responsável técnico legalmente habilitado.",
+                "estrategia": "Conferir se o período de responsabilidade técnica cobre os períodos de exposição do Campo 15."
+            })
+    else:
+        achados.append({
+            "campo": "16",
+            "nome": "Responsáveis pelos registros ambientais",
+            "status": "NÃO LOCALIZADO / TABELA NÃO ESTRUTURADA",
+            "criticidade": "CRÍTICA",
+            "valor": "",
+            "falha": "Não foi possível estruturar as linhas do Campo 16.",
+            "verificacao": "O Campo 16 deve conter período, CPF/NIT, registro profissional e nome.",
+            "fundamento": "IN 128/2022, art. 285; CLT, art. 195.",
+            "estrategia": "Preencher manualmente os dados do Campo 16 ou solicitar PPP/LTCAT complementar."
+        })
+
+    return achados
+
+
 def analisar_campos(texto):
     texto_norm = normalizar(texto)
 
@@ -1519,8 +1951,14 @@ def gerar_parecer(texto, trf):
     linhas.append("")
     linhas.append("## BASE LEGAL UTILIZADA NA ANÁLISE")
     bases_utilizadas = coletar_base_legal_utilizada(falhas, agentes, epi, ltcat)
+    bases_tribunal = selecionar_base_tribunal(trf, agentes, texto)
     if bases_utilizadas:
         for titulo, fundamento in bases_utilizadas:
+            linhas.append(f"### {titulo}")
+            linhas.append(f"- {fundamento}")
+            linhas.append("")
+
+        for titulo, fundamento in bases_tribunal:
             linhas.append(f"### {titulo}")
             linhas.append(f"- {fundamento}")
             linhas.append("")
@@ -1562,6 +2000,11 @@ CAMPOS_EDITAVEIS_ANALISE = [
     ("15.7", "EPI Eficaz"),
     ("15.8", "CA EPI"),
     ("15.9", "Atendimento NR-06 e NR-01"),
+    ("15.9 [01]", "Medidas de proteção coletiva/administrativa antes do EPI"),
+    ("15.9 [02]", "Uso ininterrupto e funcionamento do EPI"),
+    ("15.9 [03]", "Prazo de validade/CA do EPI"),
+    ("15.9 [04]", "Periodicidade de troca comprovada"),
+    ("15.9 [05]", "Higienização do EPI"),
     ("16", "Responsável pelos Registros Ambientais"),
     ("16.1", "Período do responsável técnico"),
     ("16.2", "CPF/NIT do Responsável"),
