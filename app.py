@@ -188,6 +188,65 @@ BASE_LEGAL = {
             "qualitativamente quando houver contato habitual e permanente. A eficácia do EPI exige comprovação concreta."
         )
     },
+    "umidade": {
+        "grupo": "Físico",
+        "termos": ["umidade", "umido", "úmido", "ambiente umido", "ambiente úmido"],
+        "norma": "NR-15 Anexo 10",
+        "limite": "Avaliação qualitativa",
+        "metodologia": "Verificação qualitativa da exposição habitual a umidade excessiva",
+        "fundamento": (
+            "NR-15, Anexo 10: a exposição a umidade excessiva é avaliada qualitativamente, "
+            "considerando a atividade, o ambiente e a habitualidade da exposição."
+        )
+    },
+    "tensoativos_domissanitarios": {
+        "grupo": "Químico",
+        "termos": [
+            "tensoativo", "tensoativos", "domissanitario", "domissanitarios", "domissanitários",
+            "saneante", "saneantes", "desinfetante", "detergente"
+        ],
+        "norma": "NR-15 Anexos 11 e 13, conforme composição química",
+        "limite": "Avaliação conforme substância: qualitativa ou quantitativa conforme composição e forma de exposição",
+        "metodologia": "LTCAT/laudo técnico com identificação dos produtos, composição, forma de contato, frequência e proteção utilizada",
+        "fundamento": (
+            "NR-15: agentes químicos devem ser analisados conforme substância, composição, forma de contato e habitualidade. "
+            "Produtos de limpeza, tensoativos e domissanitários exigem análise do LTCAT, FISPQ e das condições reais de exposição. "
+            "A eficácia do EPI deve ser comprovada de forma concreta."
+        )
+    },
+    "fumos_metalicos": {
+        "grupo": "Químico",
+        "termos": [
+            "fumos metalicos", "fumos metálicos", "fumo metalico", "fumo metálico",
+            "ferro", "manganes", "manganês", "silicio", "silício", "solda", "soldagem"
+        ],
+        "norma": "NR-15 Anexos 11, 12 e 13, conforme substância",
+        "limite": "Avaliação conforme substância: quantitativa quando houver limite de tolerância; qualitativa quando aplicável",
+        "metodologia": "LTCAT/laudo técnico com identificação da substância, forma de contato e metodologia de avaliação",
+        "fundamento": (
+            "NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos; Anexo 13 trata de agentes qualitativos. "
+            "Para agentes químicos, a simples indicação de EPI eficaz no PPP não encerra a análise previdenciária."
+        )
+    },
+    "poeiras": {
+        "grupo": "Químico",
+        "termos": ["poeira respiravel", "poeira respirável", "poeira total", "poeiras", "poeira"],
+        "norma": "NR-15 Anexo 12 e normas técnicas aplicáveis",
+        "limite": "Avaliação conforme composição da poeira e eventual presença de sílica",
+        "metodologia": "Amostragem ambiental, fração respirável/total e metodologia compatível",
+        "fundamento": "NR-15, Anexo 12: poeiras minerais exigem avaliação conforme composição, concentração e metodologia."
+    },
+    "oleos_minerais": {
+        "grupo": "Químico",
+        "termos": [
+            "oleos minerais", "óleos minerais", "oleo mineral", "óleo mineral",
+            "hidrocarboneto", "hidrocarbonetos", "graxa", "lubrificante"
+        ],
+        "norma": "NR-15 Anexo 13",
+        "limite": "Avaliação qualitativa quando caracterizado contato habitual e permanente",
+        "metodologia": "Laudo qualitativo com descrição da forma de contato e habitualidade",
+        "fundamento": "NR-15, Anexo 13: óleos minerais e hidrocarbonetos podem exigir análise qualitativa da exposição habitual."
+    },
     "biologicos": {
         "nr15_14": (
             "NR-15, Anexo 14: agentes biológicos são avaliados qualitativamente, considerando risco de contato "
@@ -499,6 +558,65 @@ AGENTES = {
             "qualitativamente quando houver contato habitual e permanente. A eficácia do EPI exige comprovação concreta."
         )
     },
+    "umidade": {
+        "grupo": "Físico",
+        "termos": ["umidade", "umido", "úmido", "ambiente umido", "ambiente úmido"],
+        "norma": "NR-15 Anexo 10",
+        "limite": "Avaliação qualitativa",
+        "metodologia": "Verificação qualitativa da exposição habitual a umidade excessiva",
+        "fundamento": (
+            "NR-15, Anexo 10: a exposição a umidade excessiva é avaliada qualitativamente, "
+            "considerando a atividade, o ambiente e a habitualidade da exposição."
+        )
+    },
+    "tensoativos_domissanitarios": {
+        "grupo": "Químico",
+        "termos": [
+            "tensoativo", "tensoativos", "domissanitario", "domissanitarios", "domissanitários",
+            "saneante", "saneantes", "desinfetante", "detergente"
+        ],
+        "norma": "NR-15 Anexos 11 e 13, conforme composição química",
+        "limite": "Avaliação conforme substância: qualitativa ou quantitativa conforme composição e forma de exposição",
+        "metodologia": "LTCAT/laudo técnico com identificação dos produtos, composição, forma de contato, frequência e proteção utilizada",
+        "fundamento": (
+            "NR-15: agentes químicos devem ser analisados conforme substância, composição, forma de contato e habitualidade. "
+            "Produtos de limpeza, tensoativos e domissanitários exigem análise do LTCAT, FISPQ e das condições reais de exposição. "
+            "A eficácia do EPI deve ser comprovada de forma concreta."
+        )
+    },
+    "fumos_metalicos": {
+        "grupo": "Químico",
+        "termos": [
+            "fumos metalicos", "fumos metálicos", "fumo metalico", "fumo metálico",
+            "ferro", "manganes", "manganês", "silicio", "silício", "solda", "soldagem"
+        ],
+        "norma": "NR-15 Anexos 11, 12 e 13, conforme substância",
+        "limite": "Avaliação conforme substância: quantitativa quando houver limite de tolerância; qualitativa quando aplicável",
+        "metodologia": "LTCAT/laudo técnico com identificação da substância, forma de contato e metodologia de avaliação",
+        "fundamento": (
+            "NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos; Anexo 13 trata de agentes qualitativos. "
+            "Para agentes químicos, a simples indicação de EPI eficaz no PPP não encerra a análise previdenciária."
+        )
+    },
+    "poeiras": {
+        "grupo": "Químico",
+        "termos": ["poeira respiravel", "poeira respirável", "poeira total", "poeiras", "poeira"],
+        "norma": "NR-15 Anexo 12 e normas técnicas aplicáveis",
+        "limite": "Avaliação conforme composição da poeira e eventual presença de sílica",
+        "metodologia": "Amostragem ambiental, fração respirável/total e metodologia compatível",
+        "fundamento": "NR-15, Anexo 12: poeiras minerais exigem avaliação conforme composição, concentração e metodologia."
+    },
+    "oleos_minerais": {
+        "grupo": "Químico",
+        "termos": [
+            "oleos minerais", "óleos minerais", "oleo mineral", "óleo mineral",
+            "hidrocarboneto", "hidrocarbonetos", "graxa", "lubrificante"
+        ],
+        "norma": "NR-15 Anexo 13",
+        "limite": "Avaliação qualitativa quando caracterizado contato habitual e permanente",
+        "metodologia": "Laudo qualitativo com descrição da forma de contato e habitualidade",
+        "fundamento": "NR-15, Anexo 13: óleos minerais e hidrocarbonetos podem exigir análise qualitativa da exposição habitual."
+    },
     "biologicos": {
         "grupo": "Biológico",
         "termos": ["biologico", "biológico", "virus", "vírus", "bacteria", "bactéria", "fungo", "hospital", "paciente", "sangue", "secrecao", "secreção", "laboratorio", "laboratório", "lixo urbano", "esgoto", "material infectocontagiante"],
@@ -712,27 +830,36 @@ def consultar_cnae_online(cnae):
 
 def extrair_data_admissao(texto):
     """
-    Extrai a data de admissão do campo 10. Também tenta padrões quebrados por OCR.
+    Campo 10: Data de admissão.
+    Evita capturar o rótulo do campo 11.
+    Também reconhece preenchimento manual.
     """
+    texto = texto or ""
+
+    try:
+        manual = valor_manual_campo(texto, "10")
+    except Exception:
+        manual = ""
+
+    if manual:
+        m_manual = re.search(r"\b\d{2}/\d{2}/\d{4}\b", manual)
+        if m_manual:
+            return m_manual.group(0)
+
     padroes = [
-        r"(?:10\s*)?Data\s*de\s*Admiss[aã]o\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})",
-        r"Data\s*de\s*Admiss[aã]o\s*(\d{2}/\d{2}/\d{4})",
+        r"10\s*[-–:]?\s*Data\s*de\s*Admiss[aã]o\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})",
+        r"Data\s*de\s*Admiss[aã]o\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})",
         r"Admiss[aã]o\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})",
-        r"10\s*Data\s*de\s*Admiss[aã]o\s*.*?(\d{2}/\d{2}/\d{4})",
+        r"10\s*[-–:]?\s*Data\s*de\s*Admiss[aã]o.*?(\d{2}/\d{2}/\d{4})(?=\s*(?:11\s*[-–:]?|Regime|$))",
     ]
 
-    for p in padroes:
-        m = re.search(p, texto, flags=re.IGNORECASE | re.DOTALL)
+    for padrao in padroes:
+        m = re.search(padrao, texto, flags=re.IGNORECASE | re.DOTALL)
         if m:
-            return m.group(1)
-
-    # fallback específico: se há várias datas, evita nascimento 28/04/1964 e prioriza 02/01/1998 quando aparecer
-    datas = extrair_datas(texto)
-    for d in datas:
-        if d == "02/01/1998":
-            return d
+            return m.group(1).strip()
 
     return ""
+
 
 
 def extrair_tipo_15_2(texto):
@@ -873,42 +1000,66 @@ def classificar_alertas(alertas):
 def extrair_cpf_ou_nit(texto):
     """
     Campo 6: aceita CPF, NIT, PIS ou PASEP.
-    Também reconhece preenchimento manual no bloco de edição.
+    Evita capturar o rótulo do próximo campo.
+    Também reconhece preenchimento manual no bloco editável.
     """
     texto = texto or ""
 
+    try:
+        manual = valor_manual_campo(texto, "6")
+    except Exception:
+        manual = ""
+
+    if manual and not re.match(r"^\s*\d+\s*[-:]", manual):
+        return manual.strip()
+
     padroes = [
-        r"6\s*[-:]?\s*(?:CPF/NIT|CPF|NIT|PIS|PASEP)\s*[:\-]?\s*([0-9.\-]{10,20})",
+        r"6\s*[-–:]?\s*(?:CPF/NIT|CPF|NIT|PIS|PASEP)\s*[:\-]?\s*([0-9.\-]{10,20})",
         r"(?:CPF/NIT|CPF)\s*[:\-]?\s*([0-9]{3}\.?[0-9]{3}\.?[0-9]{3}-?[0-9]{2})",
         r"(?:NIT|PIS|PASEP)\s*[:\-]?\s*([0-9]{10,11})",
+        r"6\s*[-–:]?\s*CPF\s*(?:\n|\s)+([0-9.\-]{10,20})",
+        r"6\s*[-–:]?\s*NIT\s*(?:\n|\s)+([0-9]{10,11})",
     ]
 
     for padrao in padroes:
         m = re.search(padrao, texto, flags=re.IGNORECASE)
         if m:
-            return m.group(1).strip()
+            valor = m.group(1).strip()
+            if valor and not re.match(r"^\s*\d+\s*[-:]", valor):
+                return valor
 
     return ""
+
 
 
 def extrair_campo9_ctps_ou_esocial(texto):
     """
     Campo 9: aceita CTPS ou Matrícula eSocial.
-    Também reconhece preenchimento manual no bloco de edição.
+    Evita capturar apenas a palavra 'eSocial' ou rótulos do próximo campo.
     """
     texto = texto or ""
 
+    try:
+        manual = valor_manual_campo(texto, "9")
+    except Exception:
+        manual = ""
+
+    if manual and not re.match(r"^\s*\d+\s*[-:]", manual) and manual.lower() not in ["esocial", "e social"]:
+        return manual.strip()
+
     padroes = [
-        r"9\s*[-:]?\s*(?:CTPS\s*/\s*Matr[ií]cula\s*eSocial|CTPS|Matr[ií]cula\s*eSocial|Matr[ií]cula)\s*[:\-]?\s*([0-9A-Z./\-]{3,40})",
+        r"9\s*[-–:]?\s*(?:CTPS|Matr[ií]cula(?:\s+do\s+Trabalhador)?(?:\s+no)?\s*eSocial|Matr[ií]cula)\s*(?:\(.*?\))?\s*[:\-]?\s*([0-9A-Z./\-]{3,40})",
         r"CTPS\s*(?:\(.*?\))?\s*[:\-]?\s*([0-9A-Z./\-]{3,40})",
         r"Matr[ií]cula(?:\s+do\s+Trabalhador)?(?:\s+no)?\s*eSocial\s*[:\-]?\s*([0-9A-Z./\-]{3,40})",
-        r"Matr[ií]cula\s*[:\-]?\s*([0-9A-Z./\-]{3,40})",
+        r"9\s*[-–:]?\s*CTPS.*?(?:\n|\s)([0-9]{3,}/[0-9A-Z./\-]{2,})",
     ]
 
     for padrao in padroes:
         m = re.search(padrao, texto, flags=re.IGNORECASE)
         if m:
-            return m.group(1).strip()
+            valor = m.group(1).strip()
+            if valor.lower() not in ["esocial", "e social"] and not re.match(r"^\s*\d+\s*[-:]", valor):
+                return valor
 
     return ""
 
@@ -1000,90 +1151,121 @@ def analisar_campos(texto):
     return resultados
 
 def analisar_agentes(texto):
+    """
+    Identifica todos os agentes nocivos encontrados.
+    Usa termos específicos e também fallback pelo campo 15.2 quando o PPP marca Físico/Químico/Biológico.
+    """
     texto_norm = normalizar(texto)
     agentes = []
 
     for chave, info in AGENTES.items():
-        if possui(texto_norm, info["termos"]):
+        termos_norm = [normalizar(t) for t in info.get("termos", [])]
+        if any(t in texto_norm for t in termos_norm):
             item = {
                 "agente": chave,
-                "grupo": info["grupo"],
-                "norma": info["norma"],
-                "limite": info["limite"],
-                "metodologia": info["metodologia"],
-                "fundamento": info["fundamento"],
-                "enquadramento": "INDÍCIO DE ENQUADRAMENTO — exige conferência do período, intensidade e metodologia."
+                "grupo": info.get("grupo", ""),
+                "norma": info.get("norma", ""),
+                "limite": info.get("limite", ""),
+                "metodologia": info.get("metodologia", ""),
+                "fundamento": info.get("fundamento", ""),
+                "enquadramento": "INDÍCIO DE ENQUADRAMENTO — exige conferência do período, habitualidade, permanência, intensidade/concentração e metodologia."
             }
 
-            if chave == "ruido":
-                ruidos = extrair_ruidos(texto)
-                item["valores_detectados_db"] = ruidos
-                if ruidos:
-                    maior = max(ruidos)
-                    if maior > 85:
-                        item["enquadramento"] = f"Ruído detectado em {maior} dB. Há forte indício de especialidade para períodos posteriores a 19/11/2003, se habitual/permanente."
-                    elif maior > 80:
-                        item["enquadramento"] = f"Ruído detectado em {maior} dB. Pode ser favorável para períodos até 05/03/1997; exige análise cronológica."
-                    else:
-                        item["enquadramento"] = f"Ruído detectado em {maior} dB, abaixo do limite atual de 85 dB; risco de indeferimento por ruído."
-                else:
-                    item["enquadramento"] = "Ruído mencionado, mas sem intensidade numérica clara. Falha crítica no campo 15.4."
+            grupo_norm = normalizar(item["grupo"])
 
-            if info.get("grupo", "").lower().startswith("químico") or info.get("grupo", "").lower().startswith("quimico"):
+            if "quim" in grupo_norm:
                 item["enquadramento"] = (
-                    "Agente químico identificado no PPP. Deve ser analisado conforme a natureza do agente: "
-                    "quando quantitativo, exige concentração e metodologia; quando qualitativo, a exposição habitual "
-                    "e permanente pode ser suficiente. A simples indicação de EPI eficaz não afasta automaticamente "
-                    "a especialidade sem prova concreta de neutralização."
+                    "Agente químico identificado no PPP. A análise deve considerar a substância/produto, composição, "
+                    "forma de contato, habitualidade, FISPQ/LTCAT, metodologia e eficácia concreta do EPI."
+                )
+            elif "fisic" in grupo_norm:
+                item["enquadramento"] = (
+                    "Agente físico identificado no PPP. A análise depende do agente específico, da metodologia, "
+                    "da habitualidade/permanência e, quando aplicável, da intensidade."
+                )
+            elif "biologic" in grupo_norm:
+                item["enquadramento"] = (
+                    "Agente biológico identificado no PPP. A análise é predominantemente qualitativa, considerando "
+                    "risco ocupacional de contaminação e contato com pacientes, materiais ou ambientes contaminados."
                 )
 
             agentes.append(item)
 
+    tipos = extrair_tipo_15_2(texto)
+    tipos_norm = [normalizar(t) for t in tipos]
+
+    if "fisico" in tipos_norm and not any(normalizar(a["grupo"]).startswith("fisic") for a in agentes):
+        agentes.append({
+            "agente": "fisicos_generico",
+            "grupo": "Físico",
+            "norma": "NR-15 e Decreto 3.048/99, conforme agente físico específico",
+            "limite": "Depende do agente físico identificado no PPP",
+            "metodologia": "Conferir campo 15.3, 15.4 e 15.5",
+            "fundamento": (
+                "Agentes físicos exigem análise conforme o agente específico, metodologia, intensidade e habitualidade. "
+                "Quando o PPP indicar tipo Físico no campo 15.2, deve-se conferir o fator de risco no campo 15.3."
+            ),
+            "enquadramento": "TIPO FÍSICO IDENTIFICADO — exige conferência do fator de risco específico."
+        })
+
+    if "quimico" in tipos_norm and not any("quim" in normalizar(a["grupo"]) for a in agentes):
+        agentes.append({
+            "agente": "quimicos_generico",
+            "grupo": "Químico",
+            "norma": "NR-15 Anexos 11, 12 e 13, conforme substância",
+            "limite": "Quantitativo ou qualitativo conforme o agente químico",
+            "metodologia": "Conferir campo 15.3, concentração, técnica utilizada, FISPQ e LTCAT",
+            "fundamento": (
+                "Agentes químicos devem ser analisados conforme substância, composição, forma de contato, habitualidade "
+                "e metodologia. A eficácia do EPI deve ser comprovada de forma concreta."
+            ),
+            "enquadramento": "TIPO QUÍMICO IDENTIFICADO — exige análise do produto/substância e da forma de exposição."
+        })
+
+    if "biologico" in tipos_norm and not any("biologic" in normalizar(a["grupo"]) for a in agentes):
+        agentes.append({
+            "agente": "biologicos_generico",
+            "grupo": "Biológico",
+            "norma": "NR-15 Anexo 14",
+            "limite": "Qualitativo",
+            "metodologia": "Atividade descrita / risco de contato",
+            "fundamento": (
+                "NR-15, Anexo 14: agentes biológicos são avaliados qualitativamente, considerando risco de contato "
+                "com pacientes, material infectocontagiante, lixo urbano, esgoto, secreções, sangue, laboratórios, "
+                "hospitais e ambientes equivalentes."
+            ),
+            "enquadramento": "TIPO BIOLÓGICO IDENTIFICADO — análise qualitativa do risco ocupacional."
+        })
+
     return agentes
+
 
 
 def analisar_epi(texto, agentes):
     texto_norm = normalizar(texto)
     conclusoes = []
 
-    tem_epi = "epi" in texto_norm
-    tem_eficaz = "eficaz" in texto_norm or "s" in texto_norm
-    tem_ca = " ca " in f" {texto_norm} " or "certificado de aprovacao" in texto_norm or "certificado de aprovação" in texto.lower()
+    tem_epi = "epi" in texto_norm or "15.7" in texto
+    tem_eficaz = "eficaz" in texto_norm or "sim" in texto_norm
 
     if not tem_epi:
         conclusoes.append({
             "criticidade": "CRÍTICA",
             "ponto": "EPI não localizado",
-            "analise": "O PPP não apresenta informação clara sobre EPI no texto extraído.",
-            "fundamento": BASE_LEGAL["epi"]["nr06"] + " " + BASE_LEGAL["epi"]["tema_213_tnu"],
-            "estrategia": "Solicitar PPP completo/LTCAT e impugnar eventual presunção de eficácia do EPI."
+            "analise": "Não foi localizada informação clara sobre EPI no texto extraído.",
+            "fundamento": BASE_LEGAL["epi"]["tema_213_tnu"] + " " + BASE_LEGAL["epi"]["nr06"],
+            "estrategia": "Solicitar PPP/LTCAT complementar, CA, fichas de EPI e prova de treinamento/fiscalização."
         })
         return conclusoes
 
     for ag in agentes:
-        agente = ag["agente"]
-        grupo = ag["grupo"].lower()
+        grupo = normalizar(ag.get("grupo", ""))
+        agente = ag.get("agente", "")
 
-        if agente == "ruido":
+        if "biologic" in grupo:
             conclusoes.append({
                 "criticidade": "CRÍTICA",
-                "ponto": "EPI x ruído",
-                "analise": "Ainda que o PPP indique EPI eficaz, a especialidade por ruído acima do limite legal não é automaticamente afastada.",
-                "fundamento": BASE_LEGAL["ruido"]["tema_555_stf"] + " " + BASE_LEGAL["ruido"]["sumula_9_tnu"],
-                "estrategia": "Sustentar irrelevância da eficácia formal do EPI para ruído quando superado o limite legal."
-            })
-        elif "cancer" in grupo or agente in ["benzeno", "silica", "amianto"]:
-            conclusoes.append({
-                "criticidade": "CRÍTICA",
-                "ponto": "EPI x agente cancerígeno",
-                "analise": "Para agentes cancerígenos/LINACH, a simples declaração de EPI eficaz não neutraliza juridicamente o risco.",
-                "fundamento": BASE_LEGAL["quimicos"]["linach"] + " " + BASE_LEGAL["epi"]["irdr15_trf4"],
-                "estrategia": "Impugnar eficácia do EPI e defender análise qualitativa."
-            })
-        elif "biologico" in grupo or "biológico" in grupo:
-            conclusoes.append({
-                "criticidade": "CRÍTICA",
-                "ponto": "EPI x biológico",
+                "ponto": "EPI x agente biológico",
                 "analise": "Para agentes biológicos, o EPI não afasta automaticamente a especialidade, dada a natureza qualitativa do risco.",
                 "fundamento": BASE_LEGAL["biologicos"]["tema_211_tnu"] + " " + BASE_LEGAL["biologicos"]["irdr15"],
                 "estrategia": "Defender risco ocupacional qualitativo e solicitar prova complementar se necessário."
@@ -1093,35 +1275,29 @@ def analisar_epi(texto, agentes):
                 "criticidade": "GRAVE" if tem_eficaz else "CRÍTICA",
                 "ponto": f"EPI x agente químico ({agente})",
                 "analise": (
-                    "Para agente químico, a eficácia do EPI exige prova concreta: CA adequado ao agente, "
-                    "validade, fornecimento, treinamento, troca, higienização, fiscalização e compatibilidade "
-                    "com a forma de exposição. A mera marcação de EPI eficaz no PPP não encerra a análise."
+                    "Para agente químico, a eficácia do EPI exige prova concreta: CA adequado ao agente, validade, "
+                    "fornecimento, treinamento, troca, higienização, fiscalização e compatibilidade com a forma de exposição."
                 ),
                 "fundamento": (
-                    "NR-06; Tema 213/TNU; IRDR 15/TRF4. A eficácia do EPI para agentes químicos deve ser comprovada "
-                    "de forma concreta e compatível com o agente e a forma de exposição."
+                    "NR-06; Tema 213/TNU; IRDR 15/TRF4. Para agentes químicos, a mera marcação de EPI eficaz no PPP "
+                    "não encerra a análise se não houver prova concreta de neutralização."
                 ),
-                "estrategia": "Conferir CA, campo 15.9 e LTCAT. Se houver omissão, impugnar a neutralização do agente químico."
+                "estrategia": "Conferir CA, campo 15.9, FISPQ e LTCAT. Se houver omissão, impugnar a neutralização."
             })
-        else:
+        elif "fisic" in grupo:
             conclusoes.append({
-                "criticidade": "GRAVE" if tem_eficaz else "CRÍTICA",
-                "ponto": f"EPI x {agente}",
-                "analise": "A eficácia do EPI exige comprovação concreta: CA adequado, validade, fornecimento, troca, fiscalização, treinamento e higienização.",
-                "fundamento": BASE_LEGAL["epi"]["nr06"] + " " + BASE_LEGAL["epi"]["tema_213_tnu"],
-                "estrategia": "Verificar CA e sub-requisitos do campo 15.9. Se incompletos, impugnar a eficácia."
+                "criticidade": "MODERADA",
+                "ponto": f"EPI x agente físico ({agente})",
+                "analise": (
+                    "Para agente físico, a eficácia do EPI depende do agente específico. Em ruído acima do limite, "
+                    "o EPI eficaz não descaracteriza automaticamente a especialidade."
+                ),
+                "fundamento": BASE_LEGAL["ruido"]["tema_555_stf"] + " " + BASE_LEGAL["epi"]["tema_213_tnu"],
+                "estrategia": "Conferir agente físico específico, metodologia, intensidade e eventual aplicação do Tema 555/STF."
             })
-
-    if tem_epi and not tem_ca:
-        conclusoes.append({
-            "criticidade": "CRÍTICA",
-            "ponto": "CA do EPI não identificado",
-            "analise": "Não foi localizado Certificado de Aprovação do EPI de forma clara.",
-            "fundamento": BASE_LEGAL["epi"]["nr06"],
-            "estrategia": "Solicitar comprovação do CA válido e compatível com o agente."
-        })
 
     return conclusoes
+
 
 
 def analisar_ltcat_responsavel(texto):
