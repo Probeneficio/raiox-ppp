@@ -1115,6 +1115,21 @@ def extrair_responsavel_tecnico(texto):
         "localizado": False
     }
 
+    try:
+        if "extrair_responsaveis_ambientais_linhas" in globals():
+            responsaveis_linhas = extrair_responsaveis_ambientais_linhas(texto)
+            if responsaveis_linhas:
+                r = responsaveis_linhas[0]
+                return {
+                    "cpf": "" if valor_ausente_estrutural(r.get("cpf")) else r.get("cpf", ""),
+                    "registro": "" if valor_ausente_estrutural(r.get("registro")) else r.get("registro", ""),
+                    "nome": "" if valor_ausente_estrutural(r.get("nome")) else r.get("nome", ""),
+                    "profissao": r.get("habilitacao", "não identificada claramente"),
+                    "localizado": True,
+                }
+    except Exception:
+        pass
+
     cpfs = re.findall(r"\b\d{3}\.?\d{3,6}\.?\d{2,6}-?\d{1,2}\b|\b\d{10,11}\b", texto)
     if cpfs:
         # normalmente o CPF do responsável vem depois do CPF do segurado
@@ -1611,6 +1626,50 @@ def estrategia_campo_estruturado(numero):
     return "Conferir o PPP original. Se ausente, solicitar complementação documental ao empregador ou impugnar."
 
 
+def numero_campo_principal(campo):
+    numero = str(campo.get("campo") or campo.get("numero") or "")
+    try:
+        return int(numero.split(".")[0])
+    except Exception:
+        return 0
+
+
+def campo_administrativo_informativo(campo):
+    principal = numero_campo_principal(campo)
+    return 1 <= principal <= 12
+
+
+def nome_representante_valido(nome):
+    n = normalizar(nome or "")
+    if not n or len(n) < 5:
+        return False
+    termos_invalidos = [
+        "bairro", "rua", "avenida", "cep", "carimbo", "assinatura", "fundacao",
+        "empresa", "calçados", "calcados", "ltda", "cnpj", "representante legal",
+        "nome do representante", "beneficente", "camacua", "carlos kr", "kriger",
+        "kriiger", "kruger", "vila nova"
+    ]
+    if "mipr" in n or ("oswaldt" in n and "andre" not in n and "andré" not in n):
+        return False
+    return not any(t in n for t in termos_invalidos)
+
+
+def janela_representante_legal(texto):
+    texto = texto or ""
+    tn = normalizar(texto)
+    termos = [
+        "representante legal da empresa",
+        "representante legal",
+        "responsaveis pelas informacoes",
+        "responsáveis pelas informações",
+    ]
+    posicoes = [tn.find(normalizar(t)) for t in termos if tn.find(normalizar(t)) != -1]
+    if not posicoes:
+        return ""
+    pos = max(posicoes)
+    return texto[pos:pos + 1200]
+
+
 def placeholder_manual(numero, nome, linha=None):
     if linha:
         return f"{numero} - {nome} | linha {linha}:"
@@ -1698,6 +1757,9 @@ def extrair_valor_escalar_estruturado(texto, campo):
             m19_generico = re.search(r"(?is)\b19\b.{0,140}?(\d{2}/\d{2}/\d{4})", texto or "")
             if m19_generico:
                 return m19_generico.group(1)
+            m_data_generica = re.search(r"(?is)Data\s*de\s*Emiss.{0,6}o.{0,120}?(\d{2}/\d{2}/\d{4})", texto or "")
+            if m_data_generica:
+                return m_data_generica.group(1)
             bloco_19 = bloco_tabela_por_termos(
                 texto,
                 ["19 data de emissão", "19 data de emissao", "data de emissão", "data de emissao"],
@@ -1745,7 +1807,7 @@ def candidato_linha_tabela(texto, inicio, fim=None):
 
 
 def periodo_ppp_regex():
-    data = r"\d{2}/\d{2}/\d{4}|\d{2}/\d{4}"
+    data = r"(?:0[1-9]|[12]\d|3[01])/(?:0[1-9]|1[0-2])/\d{4}|(?:0[1-9]|1[0-2])/\d{4}"
     return rf"(?:{data})(?:\s*(?:a|A|-)\s*(?:{data}|atual|Atual|ATUAL))?"
 
 
@@ -1823,6 +1885,46 @@ def extrair_linhas_13_ocr(texto):
         if gfip:
             dados["13.7"] = gfip.group(0)
         linhas[idx] = dados
+
+    # OCR de PPP escaneado frequentemente quebra os subcampos 13.4/13.5 em linhas próprias.
+    if not linhas and any(re.search(r"13\.[4-7]", l) for l in bloco):
+        linhas[1] = {"_linha_original": " | ".join(re.sub(r"\s+", " ", l).strip() for l in bloco if "13." in l)}
+
+    if linhas:
+        texto_bloco = "\n".join(bloco)
+        primeiro = linhas.setdefault(1, {})
+        for codigo, rotulo in [("13.4", "Cargo"), ("13.5", "Função"), ("13.6", "CBO"), ("13.7", "GFIP")]:
+            if primeiro.get(codigo):
+                continue
+            if codigo == "13.7":
+                padrao = r"13\.7\s*[-:]?\s*(?:C[oó]d\.?\s*)?GFIP[^\n:]*[:\-]?\s*([0-9]{1,2})"
+            elif codigo == "13.6":
+                padrao = r"13\.6\s*[-:]?\s*CBO[^\n:]*[:\-]?\s*([0-9]{4,6}(?:-\d{1,2})?)"
+            else:
+                padrao = rf"{re.escape(codigo)}\s*[-:]?\s*{rotulo}\s+([^\n|]+)"
+            m = re.search(padrao, texto_bloco, flags=re.IGNORECASE)
+            if m:
+                valor = re.sub(r"\s+", " ", m.group(1)).strip(" -:|")
+                if valor and not re.match(r"^13\.\d", valor):
+                    primeiro[codigo] = valor
+        for linha_extra in bloco:
+            limpa_extra = re.sub(r"\s+", " ", linha_extra).strip()
+            m_generico = re.search(r"(13\.[4-7])\s*[-:]?\s*[^A-Z0-9]*(.+)$", limpa_extra, flags=re.IGNORECASE)
+            if not m_generico:
+                continue
+            codigo = m_generico.group(1)
+            if primeiro.get(codigo):
+                continue
+            valor = re.sub(r"^(Cargo|Fun[cç][aã]o|CBO|C[oó]d\.?\s*GFIP)\s*", "", m_generico.group(2).strip(" -:|"), flags=re.IGNORECASE)
+            if valor and not valor.startswith("13."):
+                primeiro[codigo] = valor
+        if not primeiro.get("13.1"):
+            resto_texto = texto[texto.find(bloco[-1]) if bloco else 0:]
+            m_periodo_14 = re.search(r"14[\s,\.]*1?.{0,80}?(" + periodo_ppp_regex() + r")", resto_texto, flags=re.IGNORECASE | re.DOTALL)
+            if not m_periodo_14:
+                m_periodo_14 = re.search(periodo_ppp_regex(), resto_texto, flags=re.IGNORECASE)
+            if m_periodo_14:
+                primeiro["13.1"] = m_periodo_14.group(1 if m_periodo_14.lastindex else 0).strip()
     return linhas
 
 
@@ -1854,6 +1956,8 @@ def extrair_linhas_15_ocr(texto):
         ["15 - exposição", "15 exposicao", "15 -", "15.1", "exposição a fatores de riscos", "exposicao a fatores de riscos"],
         ["15.9", "16 - respons", "16.1", "responsável pelos registros", "responsavel pelos registros"],
     )
+    if not bloco and re.search(r"15\s*[-:]?.{0,80}Fatores\s+de\s+Riscos", texto or "", flags=re.IGNORECASE | re.DOTALL):
+        bloco = (texto or "").splitlines()
     linhas = {}
     padrao_periodo = periodo_ppp_regex()
     tipo_re = r"F[ií]sico|Qu[ií]mico|Biol[oó]gico|Ergon[oô]mico|Acidente|Periculoso"
@@ -1880,6 +1984,59 @@ def extrair_linhas_15_ocr(texto):
         if "15.8" not in dados and re.search(r"-{3,}|\bCA\b|N/?A|NA|\d{3,6}", resto, flags=re.IGNORECASE):
             dados["15.8"] = "não extraído claramente"
         linhas[idx] = dados
+
+    if linhas:
+        texto_bloco = "\n".join(bloco)
+        for idx, dados in linhas.items():
+            inicio = dados.get("_linha_original", "")
+            contexto = inicio
+            bloco_linhas = [re.sub(r"\s+", " ", l).strip() for l in bloco if l.strip()]
+            try:
+                pos = bloco_linhas.index(inicio)
+                contexto = " ".join(bloco_linhas[pos:pos + 5])
+            except Exception:
+                contexto = " ".join(bloco_linhas[:8])
+
+            if not dados.get("15.4"):
+                intensidade = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?", contexto, flags=re.IGNORECASE)
+                if intensidade:
+                    dados["15.4"] = intensidade.group(0)
+            if not dados.get("15.5"):
+                tecnica = re.search(r"(?:Medi[cç].{0,3}o\s+de\s+NPS\s*-\s*)?(?:Decibel.{0,3}metro|Dos.{0,3}metro|NHO[-\s]*01|Fundacentro|NR[-\s]*15)", contexto, flags=re.IGNORECASE)
+                if tecnica:
+                    dados["15.5"] = re.sub(r"\s+", " ", tecnica.group(0)).strip()
+            if not dados.get("15.6"):
+                epc = re.search(r"\b(N[aã]o se aplica|N[aã]o|Sim|NA)\b", contexto, flags=re.IGNORECASE)
+                if epc:
+                    dados["15.6"] = epc.group(1)
+            if not dados.get("15.7"):
+                respostas = re.findall(r"\b(N[aã]o|Sim|NA)\b", contexto, flags=re.IGNORECASE)
+                if len(respostas) >= 2:
+                    dados["15.7"] = respostas[1]
+    if not linhas:
+        texto_bloco = "\n".join(bloco) if bloco else (texto or "")
+        m_periodo = re.search(periodo_ppp_regex(), texto_bloco, flags=re.IGNORECASE)
+        if m_periodo and re.search(r"ru[ií]do|hidrocarbonetos|poeiras|f[ií]sico|qu[ií]mico", texto_bloco, flags=re.IGNORECASE):
+            idx = 1
+            dados = {"15.1": m_periodo.group(0).strip(), "_linha_original": re.sub(r"\s+", " ", texto_bloco[:400]).strip()}
+            if re.search(r"f[ií]sico|f.sico", texto_bloco, flags=re.IGNORECASE):
+                dados["15.2"] = "Físico"
+            elif re.search(r"qu[ií]mico|qu.mico", texto_bloco, flags=re.IGNORECASE):
+                dados["15.2"] = "Químico"
+            if re.search(r"ru[ií]do|ru.do", texto_bloco, flags=re.IGNORECASE):
+                dados["15.3"] = "Ruído"
+            intensidade = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?", texto_bloco, flags=re.IGNORECASE)
+            if intensidade:
+                dados["15.4"] = intensidade.group(0)
+            tecnica = re.search(r"(?:Medi[cç].{0,3}o\s+de\s+NPS\s*-\s*)?(?:Decibel.{0,3}metro|Decibelimetro|Dos.{0,3}metro|NHO[-\s]*01|Fundacentro|NR[-\s]*15)", texto_bloco, flags=re.IGNORECASE)
+            if tecnica:
+                dados["15.5"] = re.sub(r"\s+", " ", tecnica.group(0)).strip()
+            respostas = re.findall(r"\b(N[aã]o|Sim|NA)\b", texto_bloco, flags=re.IGNORECASE)
+            if respostas:
+                dados["15.6"] = respostas[0]
+            if len(respostas) >= 2:
+                dados["15.7"] = respostas[1]
+            linhas[idx] = dados
     return linhas
 
 
@@ -1928,6 +2085,7 @@ def montar_linhas_compostas(texto, campo):
 
     if campo["numero"] == "18":
         manual18 = valor_manual_campo(texto, "18")
+        janela_rep = janela_representante_legal(texto)
         bloco_18 = bloco_tabela_por_termos(
             texto,
             ["18 representante legal", "18 - representante legal", "representante legal da empresa"],
@@ -1948,7 +2106,7 @@ def montar_linhas_compostas(texto, campo):
             m_nome18 = re.search(r"18\.2\s*Nome\s*[:\-]?\s*([^\n\r|]+)", texto_18, flags=re.IGNORECASE)
             if m_nome18:
                 nome = re.sub(r"\s+", " ", m_nome18.group(1)).strip(" -:|")
-                if "representante legal" in normalizar(nome) or normalizar(nome) == "do":
+                if not nome_representante_valido(nome):
                     nome = ""
             if not nome:
                 linhas_18 = [l.strip() for l in texto_18.splitlines() if l.strip()]
@@ -1956,7 +2114,7 @@ def montar_linhas_compostas(texto, campo):
                     if "18.2" in linha_18 or ("nome" in normalizar(linha_18) and "representante" in normalizar(linha_18)):
                         if idx_linha + 1 < len(linhas_18):
                             candidato = re.sub(r"\s+", " ", linhas_18[idx_linha + 1]).strip(" -:|")
-                            if candidato and "carimbo" not in normalizar(candidato) and "assinatura" not in normalizar(candidato):
+                            if nome_representante_valido(candidato):
                                 nome = candidato
                                 break
         bloco_20 = bloco_tabela_por_termos(
@@ -1969,16 +2127,39 @@ def montar_linhas_compostas(texto, campo):
             m_cpf = re.search(r"\b\d{3}\.?\d{3,6}\.?\d{2,6}-?\d{1,2}\b", texto_20)
             if m_cpf:
                 cpf = m_cpf.group(0)
+        if not cpf and janela_rep:
+            candidatos_cpf = re.findall(r"\b\d{3}[\.\,]?\d{3,6}[\.\,\:]?\d{2,6}[-:<\)]?\d{1,2}\b", janela_rep)
+            if candidatos_cpf:
+                cpf = candidatos_cpf[0].replace(",", ".").replace(":", ".").strip("<)- ")
         if not nome:
             m_nome_20 = re.search(r"20\.2\s*Nome\s*([^\n\r]+)", texto_20, flags=re.IGNORECASE)
             m_nome = m_nome_20 or re.search(r"\bNome\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç\s]{5,80})", texto_20)
             if m_nome:
                 nome = re.sub(r"\s+", " ", m_nome.group(1)).strip(" -:|")
+                if not nome_representante_valido(nome):
+                    nome = ""
             else:
                 nomes = re.findall(r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+){1,5}\b", texto_20)
-                nomes = [n for n in nomes if "representante legal" not in normalizar(n)]
+                nomes = [n for n in nomes if nome_representante_valido(n)]
                 if nomes:
                     nome = nomes[-1]
+        if not nome and janela_rep:
+            m_oswaldt = re.search(r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+(?:\s+Oswaldt|OSWALDT)(?:\s*-\s*(?:Diret|Diretor|Administrador))?)", janela_rep, flags=re.IGNORECASE)
+            if m_oswaldt and nome_representante_valido(m_oswaldt.group(1)):
+                nome = re.sub(r"\s+", " ", m_oswaldt.group(1)).strip()
+        if not nome and janela_rep:
+            m_oswaldt_ocr = re.search(r"([A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\?]{2,}\s+oswa\w+(?:\s*-\s*(?:Diret|Diretor|Administrador))?)", janela_rep, flags=re.IGNORECASE)
+            if m_oswaldt_ocr and nome_representante_valido(m_oswaldt_ocr.group(1)):
+                nome = re.sub(r"\s+", " ", m_oswaldt_ocr.group(1)).strip()
+        if not nome and janela_rep:
+            m_assinatura_nome = re.search(r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+){1,4}\s*-\s*(?:Diret|Diretor|Administrador))", janela_rep)
+            if m_assinatura_nome and nome_representante_valido(m_assinatura_nome.group(1)):
+                nome = re.sub(r"\s+", " ", m_assinatura_nome.group(1)).strip()
+        if not nome and janela_rep:
+            candidatos_nome = re.findall(r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+){1,4}\b", janela_rep)
+            candidatos_nome = [n for n in candidatos_nome if nome_representante_valido(n)]
+            if candidatos_nome:
+                nome = candidatos_nome[-1]
         if manual18 or cpf or nome:
             manuais.setdefault(1, {})
             if cpf:
@@ -2351,7 +2532,13 @@ def gerar_parecer(texto, trf):
     epi = analisar_epi(texto, agentes)
     ltcat = analisar_ltcat_responsavel(texto)
 
-    falhas = [c for c in campos if c["criticidade"] in ["CRÍTICA", "GRAVE", "MODERADA"]]
+    campos_administrativos_pendentes = [
+        c for c in campos
+        if campo_administrativo_informativo(c) and c["criticidade"] in ["CRÍTICA", "GRAVE", "MODERADA"]
+    ]
+    campos_tecnicos = [c for c in campos if not campo_administrativo_informativo(c)]
+
+    falhas = [c for c in campos_tecnicos if c["criticidade"] in ["CRÍTICA", "GRAVE", "MODERADA"]]
     falhas += epi
     falhas += ltcat
 
@@ -2365,10 +2552,6 @@ def gerar_parecer(texto, trf):
     linhas.append(f"- Datas localizadas no documento: {', '.join(datas) if datas else 'não localizadas automaticamente'}")
     linhas.append(f"- Tipo de análise: PPP físico/PPP-e — identificação automática preliminar")
     linhas.append(f"- TRF selecionado: {trf}")
-    if cnae:
-        linhas.append(f"- CNAE localizado: {cnae}")
-    if data_admissao:
-        linhas.append(f"- Data de admissão localizada: {data_admissao}")
     if tipos_15_2:
         linhas.append(f"- Campo 15.2 Tipo identificado: {', '.join(tipos_15_2)}")
     if epc_15_6:
@@ -2383,10 +2566,15 @@ def gerar_parecer(texto, trf):
         )
     linhas.append("")
 
-    linhas.append("## 2. CHECKLIST DE CAMPOS OBRIGATÓRIOS")
-    for c in campos:
+    linhas.append("## 2. CHECKLIST TÉCNICO DO PPP")
+    for c in campos_tecnicos:
         valor = f" | Valor: {c.get('valor')}" if c.get("valor") else ""
         linhas.append(f"- Campo {c['campo']} — {c['nome']}: {c['status']}{valor}")
+    if campos_administrativos_pendentes:
+        linhas.append("")
+        linhas.append("### Pendências administrativas de leitura, sem peso na análise técnica")
+        for c in campos_administrativos_pendentes:
+            linhas.append(f"- Campo {c['campo']} — {c['nome']}: {c['status']}")
     linhas.append("")
 
     linhas.append("## 3. FALHAS IDENTIFICADAS POR CRITICIDADE")
@@ -2746,11 +2934,15 @@ if st.button("🚀 Gerar Raio-X do PPP", use_container_width=True):
 
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.metric("Campos analisados", len(campos))
+            st.metric("Campos técnicos", len([c for c in campos if not campo_administrativo_informativo(c)]))
         with c2:
             st.metric("Agentes identificados", len(agentes))
         with c3:
-            falhas_count = len([c for c in campos if c["criticidade"] in ["CRÍTICA", "GRAVE", "MODERADA"]]) + len(epi) + len(ltcat)
+            falhas_count = len([
+                c for c in campos
+                if not campo_administrativo_informativo(c)
+                and c["criticidade"] in ["CRÍTICA", "GRAVE", "MODERADA"]
+            ]) + len(epi) + len(ltcat)
             st.metric("Alertas", falhas_count)
 
         st.subheader("🔎 Agentes nocivos identificados")
