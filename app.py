@@ -994,7 +994,7 @@ def normalizar_cpf_nit_visual(valor):
     if not digitos:
         return ""
     if len(digitos) == 11:
-        return f"{digitos[:3]}.{digitos[3:8]}.{digitos[8:10]}-{digitos[10:]}"
+        return f"{digitos[:3]}.{digitos[3:6]}.{digitos[6:9]}-{digitos[9:]}"
     return digitos
 
 
@@ -1571,6 +1571,8 @@ def extrair_responsaveis_ambientais_linhas(texto):
             cpf = cpfs[i] if i < len(cpfs) else ""
 
             if registro or nome or periodo:
+                if not registro:
+                    continue
                 reg_norm = normalizar(registro)
                 habilitacao = "médico do trabalho" if "crm" in reg_norm else (
                     "engenheiro de segurança do trabalho / engenheiro do trabalho" if "crea" in reg_norm else (
@@ -1892,6 +1894,16 @@ def extrair_campos_administrativos_ocr(texto):
     if cnae:
         dados["3"] = cnae
 
+    m_empresa_soc = re.search(
+        r"CNO\|?\s*([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\.&-]{5,120}?)\s+([0-9]{4}\s*[-]?\s*[0-9]\s*/\s*[0-9]{2})",
+        flat,
+        flags=re.IGNORECASE,
+    )
+    if m_empresa_soc:
+        empresa_soc = re.sub(r"\s+", " ", m_empresa_soc.group(1)).strip(" -:|")
+        if len(empresa_soc) >= 6:
+            dados["2"] = empresa_soc
+
     if cnpj and cnae:
         trecho = flat[cnpj.end():]
         pos_cnae = trecho.find(cnae)
@@ -1901,6 +1913,18 @@ def extrair_campos_administrativos_ocr(texto):
             empresa = re.sub(r"\b(?:ao|ão)?\s*CNAE\b.*$", "", empresa, flags=re.IGNORECASE).strip(" -:|")
             empresa = re.sub(r"\s+", " ", empresa).strip()
             if empresa and len(empresa) >= 4:
+                dados["2"] = empresa
+    if not dados.get("2") or normalizar(dados.get("2")) in {"rial 3", "nome empresarial"} or len(dados.get("2", "")) < 6:
+        m_empresa_antes_cnae = re.search(
+            r"\b([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\.&-]{5,120}?(?:ME|LTDA|S/?A|EIRELI|CAMACUA))\s+"
+            r"([0-9]{4}\s*[-]?\s*[0-9]\s*/\s*[0-9]{2})",
+            flat,
+            flags=re.IGNORECASE,
+        )
+        if m_empresa_antes_cnae:
+            empresa = re.sub(r".*?(?:CNO\||CNO|CEI/CAEPF/CNO\|?)", "", m_empresa_antes_cnae.group(1), flags=re.IGNORECASE)
+            empresa = re.sub(r"\s+", " ", empresa).strip(" -:|")
+            if len(empresa) >= 6:
                 dados["2"] = empresa
 
     m_trab = re.search(
@@ -1948,6 +1972,33 @@ def extrair_campos_administrativos_ocr(texto):
         dados["9"] = limpar_valor_campo_escalar("9", m_linha_doc.group(3))
         dados["10"] = m_linha_doc.group(4)
         dados["11"] = m_linha_doc.group(5).upper().replace("N/A", "NA")
+
+    if not all(dados.get(k) for k in ["7", "8", "9", "10", "11"]):
+        linhas_admin = [re.sub(r"\s+", " ", l).strip() for l in bloco.splitlines() if l.strip()]
+        for idx_linha, linha_admin in enumerate(linhas_admin):
+            m_doc_cab = re.search(
+                r"(\d{2}/\d{2}/\d{4}|\d{2}/\d{6})\s+(Masculino|Feminino|M|F)\b",
+                linha_admin,
+                flags=re.IGNORECASE,
+            )
+            if not m_doc_cab:
+                continue
+            if not any(t in normalizar(linha_admin) for t in ["esocial", "admissao", "admissão", "revezamento"]):
+                continue
+            resto_linhas = " ".join(linhas_admin[idx_linha + 1:idx_linha + 4])
+            m_doc_valores = re.search(
+                r"\b([0-9A-Z./\-]{1,40})\s+(\d{2}/\d{2}/\d{4})\s+(NA|N/?A|N[aã\?]o\s+aplic\S*vel)\b",
+                resto_linhas,
+                flags=re.IGNORECASE,
+            )
+            if m_doc_valores:
+                dados.setdefault("7", normalizar_data_ocr(m_doc_cab.group(1)))
+                sexo = m_doc_cab.group(2)
+                dados.setdefault("8", "Masculino" if normalizar(sexo).startswith("m") else "Feminino")
+                dados.setdefault("9", limpar_valor_campo_escalar("9", m_doc_valores.group(1)))
+                dados.setdefault("10", m_doc_valores.group(2))
+                dados.setdefault("11", m_doc_valores.group(3).upper().replace("N/A", "NA"))
+                break
 
     for chave in list(dados):
         dados[chave] = limpar_valor_campo_escalar(chave, dados[chave])
@@ -2002,7 +2053,7 @@ def extrair_valor_escalar_estruturado(texto, campo):
             m19_generico = re.search(r"(?is)\b19\b.{0,140}?(\d{2}/\d{2}/\d{4})", texto or "")
             if m19_generico:
                 return m19_generico.group(1)
-            m_data_generica = re.search(r"(?is)Data\s*de\s*Emiss.{0,6}o.{0,120}?(\d{2}/\d{2}/\d{4})", texto or "")
+            m_data_generica = re.search(r"(?is)Data\s*(?:da|de)?\s*Emiss.{0,8}o(?:\s*do\s*PPP)?.{0,160}?(\d{2}/\d{2}/\d{4})", texto or "")
             if m_data_generica:
                 return m_data_generica.group(1)
             bloco_19 = bloco_tabela_por_termos(
@@ -2116,6 +2167,8 @@ def normalizar_linha_15(dados):
 
     if re.search(r"ru[ií\?]do|ru.do", str(dados.get("15.3", "")), flags=re.IGNORECASE):
         dados["15.3"] = "Ruído"
+    elif re.search(r"fumos?\s+met.{0,3}licos?", str(dados.get("15.3", "")), flags=re.IGNORECASE):
+        dados["15.3"] = "Fumos metálicos"
 
     if dados.get("15.4"):
         m = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?", dados["15.4"], flags=re.IGNORECASE)
@@ -2134,7 +2187,7 @@ def normalizar_linha_15(dados):
     if len(respostas) >= 2 and (not dados.get("15.7") or valor_15_7 not in {"nao", "sim", "na", "nao se aplica"}):
         dados["15.7"] = respostas[1]
     if dados.get("15.8"):
-        if normalizar(str(dados.get("15.8", ""))) in {"nao", "sim", "na", "nao se aplica"}:
+        if normalizar(str(dados.get("15.8", ""))) in {"nao", "sim", "nao se aplica"}:
             dados["15.8"] = ""
         ca = extrair_ca_linha_15(dados.get("15.8", ""))
         if ca:
@@ -2143,6 +2196,8 @@ def normalizar_linha_15(dados):
         ca_linha = extrair_ca_linha_15(linha_original)
         if ca_linha:
             dados["15.8"] = ca_linha
+        elif normalizar(str(dados.get("15.7", ""))) in {"na", "nao se aplica"}:
+            dados["15.8"] = "NA"
     return dados
 
 
@@ -2182,7 +2237,7 @@ def extrair_linhas_13_ocr(texto):
     bloco = bloco_tabela_por_termos(
         texto,
         ["13 - lotação", "13 lotação", "13 -", "13.1", "lotação e atribuição", "lotacao e atribuicao"],
-        ["14 - profissiografia", "14 profissiografia", "14 -", "14.1", "profissiografia"],
+        ["14 - profissiografia", "14 profissiografia", "14 -", "14.1", "profissiografia", "15 - exposição", "15 exposicao", "15 -", "fatores de riscos"],
     )
     linhas = {}
     padrao_periodo = periodo_ppp_regex()
@@ -2225,6 +2280,9 @@ def extrair_linhas_13_ocr(texto):
                 dados["13.4"] = re.sub(r"\s+", " ", m_auxiliar.group(1)).strip()
                 dados["13.5"] = re.sub(r"\s+", " ", m_auxiliar.group(1)).strip()
         refinar_linha_13_por_repeticao(dados, resto)
+        setor_norm = normalizar(dados.get("13.3", ""))
+        if setor_norm in {"s o", "se o", "sê o", "s? o"} or ("?" in str(dados.get("13.3", "")) and len(str(dados.get("13.3", ""))) <= 5):
+            dados.pop("13.3", None)
         linhas[idx] = dados
 
     # OCR de PPP escaneado frequentemente quebra os subcampos 13.4/13.5 em linhas próprias.
@@ -2238,6 +2296,10 @@ def extrair_linhas_13_ocr(texto):
             cnpj_bloco = re.search(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b", texto_bloco)
             if cnpj_bloco:
                 primeiro["13.2"] = cnpj_bloco.group(0)
+        if not primeiro.get("13.2"):
+            cnpj_admin = extrair_campos_administrativos_ocr(texto).get("1", "")
+            if cnpj_admin:
+                primeiro["13.2"] = cnpj_admin
         for codigo, rotulo in [
             ("13.2", "CNPJ"),
             ("13.3", "Setor"),
@@ -2326,10 +2388,10 @@ def extrair_linhas_14_ocr(texto):
 def extrair_linhas_15_ocr(texto):
     bloco = bloco_tabela_por_termos(
         texto,
-        ["15 - exposição", "15 exposicao", "15 -", "15.1", "exposição a fatores de riscos", "exposicao a fatores de riscos"],
+        ["15 - exposição", "15 exposicao", "15 -", "15.1", "exposição a fatores de riscos", "exposicao a fatores de riscos", "fatores de riscos"],
         ["15.9", "16 - respons", "16.1", "responsável pelos registros", "responsavel pelos registros"],
     )
-    if not bloco and re.search(r"15\s*[-:]?.{0,160}(?:Fatores\s+de\s+Riscos|Exposi[cç][aã]o)", texto or "", flags=re.IGNORECASE | re.DOTALL):
+    if not bloco and re.search(r"15\s*[-:]?.{0,160}(?:Fatores\s+de\s+Riscos|Exposi.{0,4}o)|Fumos\s+met[aá\?]licos|Qu[ií\?]mico", texto or "", flags=re.IGNORECASE | re.DOTALL):
         bloco = (texto or "").splitlines()
     linhas = {}
     padrao_periodo = periodo_ppp_regex()
@@ -2337,10 +2399,11 @@ def extrair_linhas_15_ocr(texto):
     ultimo_idx = None
     for linha in bloco:
         limpa = re.sub(r"\s+", " ", linha).strip()
-        m = re.search(rf"(?P<periodo>{padrao_periodo})\s+(?P<tipo>{tipo_re})\s+(?P<resto>.+)", limpa, flags=re.IGNORECASE)
+        linha_parse = re.sub(r"\s*\|\s*", " ", limpa)
+        m = re.search(rf"(?P<periodo>{padrao_periodo})\s+(?P<tipo>{tipo_re})\s+(?P<resto>.+)", linha_parse, flags=re.IGNORECASE)
         periodo_aberto = False
         if not m:
-            m = re.search(rf"(?P<periodo>(?:0[1-9]|[12]\d|3[01])/(?:0[1-9]|1[0-2])/\d{{4}}|(?:0[1-9]|1[0-2])/\d{{4}})\s+a\s+(?P<tipo>{tipo_re})\s+(?P<resto>.+)", limpa, flags=re.IGNORECASE)
+            m = re.search(rf"(?P<periodo>(?:0[1-9]|[12]\d|3[01])/(?:0[1-9]|1[0-2])/\d{{4}}|(?:0[1-9]|1[0-2])/\d{{4}})\s+a\s+(?P<tipo>{tipo_re})\s+(?P<resto>.+)", linha_parse, flags=re.IGNORECASE)
             periodo_aberto = bool(m)
         if not m:
             if ultimo_idx and re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB|Medi[cç\?].{0,4}o\s+de\s+NPS|Decibel", limpa, flags=re.IGNORECASE):
@@ -2618,7 +2681,7 @@ def montar_linhas_compostas(texto, campo):
             if nome or manual18:
                 manuais[1].setdefault("18.2", nome or manual18)
 
-    if not manuais:
+    if not manuais and campo["numero"] != "16":
         marcador_fim = {"13": "14", "14": "15", "15": "16", "16": "17", "18": None}.get(campo["numero"])
         candidatas = candidato_linha_tabela(texto, campo["nome"], marcador_fim)
         for idx, linha in enumerate(candidatas, start=1):
@@ -3331,6 +3394,46 @@ def campo_tem_valor(texto, numero, descricao):
     return False
 
 
+def _valor_nao_aplicavel(valor):
+    v = normalizar(str(valor or "")).strip()
+    return v in {"na", "n/a", "nao aplicavel", "não aplicável", "nao se aplica", "não se aplica"}
+
+
+def _linhas_manuais_preenchidas_do_bloco(texto):
+    texto = limpar_placeholders_manuais_vazios(texto)
+    if MARCADOR_CAMPOS_MANUAIS not in texto:
+        return texto, []
+    antes, depois = texto.split(MARCADOR_CAMPOS_MANUAIS, 1)
+    linhas = [linha for linha in depois.splitlines() if linha.strip()]
+    return antes.rstrip(), linhas
+
+
+def deve_gerar_placeholder_subcampo(texto, campo, linha, numero, dados):
+    valor = dados.get("valor", "")
+    if not valor_ausente_estrutural(valor):
+        return False
+
+    indice_linha = linha.get("linha")
+    if valor_manual_campo_linha(texto, numero, indice_linha):
+        return False
+
+    admin = extrair_campos_administrativos_ocr(texto)
+    if numero == "13.2" and admin.get("1"):
+        return False
+
+    if numero == "15.8":
+        epi = linha.get("subcampos", {}).get("15.7", {}).get("valor", "")
+        if _valor_nao_aplicavel(epi):
+            return False
+
+    if numero.startswith("15.9 ["):
+        for subitem in extrair_subitens_159(texto):
+            if subitem.get("codigo") == numero and subitem.get("status") == "LOCALIZADO":
+                return False
+
+    return True
+
+
 def preparar_texto_editavel(texto):
     """
     Acrescenta ao fim do texto extraído um bloco com qualquer campo analisado
@@ -3338,34 +3441,42 @@ def preparar_texto_editavel(texto):
     manualmente e clicar de novo em Gerar Raio-X do PPP.
     """
     texto = texto or ""
-
-    # Evita duplicar o bloco se o usuário reabrir ou reanalisar.
-    if MARCADOR_CAMPOS_MANUAIS in texto:
-        return texto
+    texto_base, manuais_preenchidos = _linhas_manuais_preenchidas_do_bloco(texto)
+    texto_analise = limpar_placeholders_manuais_vazios(texto)
 
     faltantes = []
-    campos = analisar_campos(texto)
+    campos = analisar_campos(texto_analise)
     for campo in campos:
         if campo.get("linhas"):
             for linha in campo["linhas"]:
                 for numero in linha.get("campos_incompletos", []):
                     dados = linha["subcampos"].get(numero, {})
-                    faltantes.append(placeholder_manual(numero, dados.get("nome", campo["nome"]), linha["linha"]))
+                    if deve_gerar_placeholder_subcampo(texto_analise, campo, linha, numero, dados):
+                        faltantes.append(placeholder_manual(numero, dados.get("nome", campo["nome"]), linha["linha"]))
         elif campo["status"] == "INCOMPLETO":
-            faltantes.append(placeholder_manual(campo["numero"], campo["nome"]))
+            if not valor_manual_campo(texto_analise, campo["numero"]):
+                faltantes.append(placeholder_manual(campo["numero"], campo["nome"]))
 
-    if not faltantes:
-        return texto
+    linhas_bloco = []
+    vistos = set()
+    for linha in manuais_preenchidos + faltantes:
+        chave = linha.strip()
+        if chave and chave not in vistos:
+            linhas_bloco.append(linha)
+            vistos.add(chave)
+
+    if not linhas_bloco:
+        return texto_base
 
     bloco = (
         "\n\n"
         f"{MARCADOR_CAMPOS_MANUAIS}\n"
         "Preencha somente os campos que conseguir confirmar no PPP original. Depois clique novamente em GERAR RAIO-X DO PPP.\n\n"
-        + "\n".join(faltantes)
+        + "\n".join(linhas_bloco)
         + "\n"
     )
 
-    return texto.rstrip() + bloco
+    return texto_base.rstrip() + bloco
 
 
 # ============================================================
