@@ -1935,7 +1935,7 @@ def extrair_campos_administrativos_ocr(texto):
     m_linha_doc = re.search(
         r"(\d{2}/\d{2}/\d{4}|\d{2}/\d{6})\s+"
         r"(Masculino|Feminino|M|F)\s+"
-        r"([0-9A-Z./\-]{1,40})\s+"
+        r"([0-9A-Z./\-\s]{1,40}?)\s+"
         r"(\d{2}/\d{2}/\d{4})\s+"
         r"(NA|N/?A|N[ãa\?]o\s+aplic\S*vel)",
         flat,
