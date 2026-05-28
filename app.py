@@ -984,6 +984,20 @@ def limpar_valor_campo_escalar(numero, valor):
     return re.sub(r"\s+", " ", valor).strip(" -:|")
 
 
+def limpar_documento_numerico(valor):
+    digitos = re.sub(r"\D", "", str(valor or ""))
+    return digitos if len(digitos) in {10, 11} else ""
+
+
+def normalizar_cpf_nit_visual(valor):
+    digitos = limpar_documento_numerico(valor)
+    if not digitos:
+        return ""
+    if len(digitos) == 11:
+        return f"{digitos[:3]}.{digitos[3:8]}.{digitos[8:10]}-{digitos[10:]}"
+    return digitos
+
+
 def limpar_nome_trabalhador_ocr(valor):
     nome = re.sub(r"\s+", " ", str(valor or "")).strip(" -:|")
     m_apos_nit = re.search(r"(?:\b6\s*[-–:]?\s*)?NIT\s*[:\-]?\s+(.+)$", nome, flags=re.IGNORECASE)
@@ -1705,19 +1719,27 @@ def nome_representante_valido(nome):
         return False
     if re.fullmatch(r"[\d\.\,\:\-<\)\s]+", str(nome or "").strip()):
         return False
+    letras = re.findall(r"[A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\?]", str(nome or ""))
+    digitos = re.findall(r"\d", str(nome or ""))
+    if len(letras) < 5 or len(digitos) > len(letras):
+        return False
     termos_invalidos = [
         "bairro", "rua", "avenida", "cep", "carimbo", "assinatura", "fundacao",
         "empresa", "calçados", "calcados", "ltda", "cnpj", "representante legal",
         "nome do representante", "beneficente", "camacua", "carlos kr", "kriger",
         "kriiger", "kruger", "vila nova"
     ]
-    if "mipr" in n or ("oswaldt" in n and "andre" not in n and "andré" not in n):
+    if "mipr" in n or ("oswaldt" in n and "andre" not in n and "andré" not in n and "andr" not in n):
         return False
     return not any(t in n for t in termos_invalidos)
 
 
 def limpar_nome_representante(nome):
+    m_oswaldt = re.search(r"([A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\?]{3,}\s+Oswaldt(?:\s*-\s*(?:Diret|Diretor|Administrador))?)", str(nome or ""), flags=re.IGNORECASE)
+    if m_oswaldt:
+        return re.sub(r"\s+", " ", m_oswaldt.group(1)).strip(" -:|")
     nome = re.sub(r"\b\d{3}[\.\,]?\d{3,6}[\.\,\:]?\d{2,6}[-:<\)]?\d{1,2}\b", " ", str(nome or ""))
+    nome = re.sub(r"\b\d+[/\\]?[A-Za-z0-9<>\)\(-]+\b", " ", nome)
     nome = re.sub(r"^(?:20\.2\s*)?Nome\s*", " ", nome, flags=re.IGNORECASE)
     nome = re.sub(r"\s+", " ", nome).strip(" -:|")
     return nome
@@ -1915,7 +1937,7 @@ def extrair_campos_administrativos_ocr(texto):
         r"(Masculino|Feminino|M|F)\s+"
         r"([0-9A-Z./\-]{1,40})\s+"
         r"(\d{2}/\d{2}/\d{4})\s+"
-        r"(NA|N/?A|N[ãa]o\s+aplic[aá]vel)",
+        r"(NA|N/?A|N[ãa\?]o\s+aplic\S*vel)",
         flat,
         flags=re.IGNORECASE,
     )
@@ -2212,6 +2234,10 @@ def extrair_linhas_13_ocr(texto):
     if linhas:
         texto_bloco = "\n".join(bloco)
         primeiro = linhas.setdefault(1, {})
+        if not primeiro.get("13.2"):
+            cnpj_bloco = re.search(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b", texto_bloco)
+            if cnpj_bloco:
+                primeiro["13.2"] = cnpj_bloco.group(0)
         for codigo, rotulo in [
             ("13.2", "CNPJ"),
             ("13.3", "Setor"),
@@ -2319,6 +2345,30 @@ def extrair_linhas_15_ocr(texto):
         if not m:
             if ultimo_idx and re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB|Medi[cç\?].{0,4}o\s+de\s+NPS|Decibel", limpa, flags=re.IGNORECASE):
                 base = linhas.get(ultimo_idx, {})
+                intensidade = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?(?:\s*\(\d{2}/\d{2}/\d{4}\))?", limpa, flags=re.IGNORECASE)
+                tecnica = re.search(r"(?:Medi[cç\?].{0,4}o\s+de\s+NPS\s*-\s*)?(?:Decibel.{0,3}metro|Decibelimetro|Dos.{0,3}metro|NHO[-\s]*01|Fundacentro|NR[-\s]*15)", limpa, flags=re.IGNORECASE)
+                if not intensidade:
+                    if tecnica and not base.get("15.5"):
+                        base["15.5"] = re.sub(r"\s+", " ", tecnica.group(0)).strip()
+                        normalizar_linha_15(base)
+                    continue
+                intensidade_valor = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?", intensidade.group(0), flags=re.IGNORECASE).group(0)
+                if not base.get("15.4"):
+                    base["15.4"] = intensidade.group(0)
+                    if tecnica and not base.get("15.5"):
+                        base["15.5"] = re.sub(r"\s+", " ", tecnica.group(0)).strip()
+                    respostas_base = re.findall(r"\b(N[aã\?]o|Sim|NA)\b", limpa, flags=re.IGNORECASE)
+                    if respostas_base and not base.get("15.6"):
+                        base["15.6"] = respostas_base[0]
+                    if len(respostas_base) >= 2 and not base.get("15.7"):
+                        base["15.7"] = respostas_base[1]
+                    normalizar_linha_15(base)
+                    continue
+                if normalizar(base.get("15.4")) == normalizar(intensidade_valor):
+                    if tecnica and not base.get("15.5"):
+                        base["15.5"] = re.sub(r"\s+", " ", tecnica.group(0)).strip()
+                    normalizar_linha_15(base)
+                    continue
                 idx = len(linhas) + 1
                 dados = {
                     "15.1": base.get("15.1", ""),
@@ -2326,10 +2376,7 @@ def extrair_linhas_15_ocr(texto):
                     "15.3": base.get("15.3", ""),
                     "_linha_original": limpa,
                 }
-                intensidade = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?(?:\s*\(\d{2}/\d{2}/\d{4}\))?", limpa, flags=re.IGNORECASE)
-                if intensidade:
-                    dados["15.4"] = intensidade.group(0)
-                tecnica = re.search(r"(?:Medi[cç\?].{0,4}o\s+de\s+NPS\s*-\s*)?(?:Decibel.{0,3}metro|Decibelimetro|Dos.{0,3}metro|NHO[-\s]*01|Fundacentro|NR[-\s]*15)", limpa, flags=re.IGNORECASE)
+                dados["15.4"] = intensidade.group(0)
                 if tecnica:
                     dados["15.5"] = re.sub(r"\s+", " ", tecnica.group(0)).strip()
                 respostas = re.findall(r"\b(N[aã\?]o|Sim|NA)\b", limpa, flags=re.IGNORECASE)
@@ -2500,13 +2547,17 @@ def montar_linhas_compostas(texto, campo):
                 candidatos_nome = [limpar_nome_representante(v) for v in valores]
                 candidatos_nome = [v for v in candidatos_nome if nome_representante_valido(v)]
                 if not cpf and candidatos_cpf:
-                    cpf = candidatos_cpf[0].replace(",", ".").replace(":", ".").strip("<)- ")
+                    cpf = normalizar_cpf_nit_visual(candidatos_cpf[0])
                 if not nome and candidatos_nome:
                     nome = candidatos_nome[-1]
+                if not nome:
+                    m_nome_linha = re.search(r"([A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç\?]{3,}\s+Oswaldt(?:\s*-\s*(?:Diret|Diretor|Administrador))?)", linha_rep, flags=re.IGNORECASE)
+                    if m_nome_linha and nome_representante_valido(m_nome_linha.group(1)):
+                        nome = limpar_nome_representante(m_nome_linha.group(1))
         if not cpf:
             m_cpf18 = re.search(r"18\.1\s*(?:NIT|CPF)?[^\d]{0,30}([\d\.\-]{8,20})", texto_18, flags=re.IGNORECASE)
             if m_cpf18:
-                cpf = m_cpf18.group(1)
+                cpf = normalizar_cpf_nit_visual(m_cpf18.group(1))
         if not nome:
             m_nome18 = re.search(r"18\.2\s*Nome\s*[:\-]?\s*([^\n\r|]+)", texto_18, flags=re.IGNORECASE)
             if m_nome18:
@@ -2525,11 +2576,11 @@ def montar_linhas_compostas(texto, campo):
         if not cpf:
             m_cpf = re.search(r"\b\d{3}\.?\d{3,6}\.?\d{2,6}-?\d{1,2}\b", texto_20)
             if m_cpf:
-                cpf = m_cpf.group(0)
+                cpf = normalizar_cpf_nit_visual(m_cpf.group(0))
         if not cpf and janela_rep:
             candidatos_cpf = re.findall(r"\b\d{3}[\.\,]?\d{3,6}[\.\,\:]?\d{2,6}[-:<\)]?\d{1,2}\b", janela_rep)
             if candidatos_cpf:
-                cpf = candidatos_cpf[0].replace(",", ".").replace(":", ".").strip("<)- ")
+                cpf = normalizar_cpf_nit_visual(candidatos_cpf[0])
         if not nome:
             m_nome_20 = re.search(r"20\.2\s*Nome\s*([^\n\r]+)", texto_20, flags=re.IGNORECASE)
             m_nome = m_nome_20 or re.search(r"\bNome\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç\s]{5,80})", texto_20)
@@ -2561,6 +2612,7 @@ def montar_linhas_compostas(texto, campo):
                 nome = candidatos_nome[-1]
         if manual18 or cpf or nome:
             manuais.setdefault(1, {})
+            cpf = normalizar_cpf_nit_visual(cpf)
             if cpf:
                 manuais[1].setdefault("18.1", cpf)
             if nome or manual18:
@@ -2685,48 +2737,77 @@ def analisar_campos(texto):
     texto = limpar_placeholders_manuais_vazios(texto)
     return [campo_estruturado_para_resultado(campo, texto) for campo in PPP_CAMPOS_ESTRUTURADOS]
 
+
+def corpus_agentes_campo15(texto):
+    partes = []
+    for dados in extrair_linhas_15_ocr(texto).values():
+        for chave in ["15.2", "15.3", "15.4", "15.5"]:
+            valor = dados.get(chave, "")
+            if valor and not valor_ausente_estrutural(valor):
+                partes.append(str(valor))
+    if partes:
+        return " ".join(partes)
+    bloco = bloco_tabela_por_termos(
+        texto,
+        ["15 - exposição", "15 exposicao", "15 -", "15.1", "exposição a fatores de riscos", "exposicao a fatores de riscos"],
+        ["15.9", "16 - respons", "16.1", "responsável pelos registros", "responsavel pelos registros"],
+    )
+    return " ".join(re.sub(r"\s+", " ", l).strip() for l in bloco)
+
+
+def montar_item_agente(chave, info):
+    item = {
+        "agente": chave,
+        "grupo": info.get("grupo", ""),
+        "norma": info.get("norma", ""),
+        "limite": info.get("limite", ""),
+        "metodologia": info.get("metodologia", ""),
+        "fundamento": info.get("fundamento", ""),
+        "enquadramento": "INDÍCIO DE ENQUADRAMENTO — exige conferência do período, habitualidade, permanência, intensidade/concentração e metodologia."
+    }
+
+    grupo_norm = normalizar(item["grupo"])
+    if "quim" in grupo_norm:
+        item["enquadramento"] = (
+            "Agente químico identificado no Campo 15 do PPP. A análise deve considerar a substância/produto, "
+            "composição, forma de contato, habitualidade, FISPQ/LTCAT, metodologia e eficácia concreta do EPI."
+        )
+    elif "fisic" in grupo_norm:
+        item["enquadramento"] = (
+            "Agente físico identificado no Campo 15 do PPP. A análise depende do agente específico, "
+            "da metodologia, da habitualidade/permanência e, quando aplicável, da intensidade."
+        )
+    elif "biologic" in grupo_norm:
+        item["enquadramento"] = (
+            "Agente biológico identificado no Campo 15 do PPP. A análise é predominantemente qualitativa, "
+            "considerando risco ocupacional de contaminação e contato com pacientes, materiais ou ambientes contaminados."
+        )
+    return item
+
+
 def analisar_agentes(texto):
     """
-    Identifica todos os agentes nocivos encontrados.
-    Usa termos específicos e também fallback pelo campo 15.2 quando o PPP marca Físico/Químico/Biológico.
+    Identifica agentes nocivos apenas a partir do Campo 15 estruturado.
+    Evita falso positivo por palavras soltas em outros trechos do documento.
     """
-    texto_norm = normalizar(texto)
+    corpus_15 = corpus_agentes_campo15(texto)
+    texto_norm = normalizar(corpus_15)
     agentes = []
 
     for chave, info in AGENTES.items():
         termos_norm = [normalizar(t) for t in info.get("termos", [])]
         if any(t in texto_norm for t in termos_norm):
-            item = {
-                "agente": chave,
-                "grupo": info.get("grupo", ""),
-                "norma": info.get("norma", ""),
-                "limite": info.get("limite", ""),
-                "metodologia": info.get("metodologia", ""),
-                "fundamento": info.get("fundamento", ""),
-                "enquadramento": "INDÍCIO DE ENQUADRAMENTO — exige conferência do período, habitualidade, permanência, intensidade/concentração e metodologia."
-            }
+            item = montar_item_agente(chave, info)
+            if item not in agentes:
+                agentes.append(item)
 
-            grupo_norm = normalizar(item["grupo"])
-
-            if "quim" in grupo_norm:
-                item["enquadramento"] = (
-                    "Agente químico identificado no PPP. A análise deve considerar a substância/produto, composição, "
-                    "forma de contato, habitualidade, FISPQ/LTCAT, metodologia e eficácia concreta do EPI."
-                )
-            elif "fisic" in grupo_norm:
-                item["enquadramento"] = (
-                    "Agente físico identificado no PPP. A análise depende do agente específico, da metodologia, "
-                    "da habitualidade/permanência e, quando aplicável, da intensidade."
-                )
-            elif "biologic" in grupo_norm:
-                item["enquadramento"] = (
-                    "Agente biológico identificado no PPP. A análise é predominantemente qualitativa, considerando "
-                    "risco ocupacional de contaminação e contato com pacientes, materiais ou ambientes contaminados."
-                )
-
-            agentes.append(item)
-
-    tipos = extrair_tipo_15_2(texto)
+    tipos = []
+    for dados in extrair_linhas_15_ocr(texto).values():
+        tipo = dados.get("15.2", "")
+        if tipo and not valor_ausente_estrutural(tipo):
+            tipos.append(tipo)
+    if not tipos:
+        tipos = extrair_tipo_15_2(corpus_15)
     tipos_norm = [normalizar(t) for t in tipos]
 
     if "fisico" in tipos_norm and not any(normalizar(a["grupo"]).startswith("fisic") for a in agentes):
