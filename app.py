@@ -1531,10 +1531,11 @@ def extrair_responsaveis_ambientais_linhas(texto):
         ["17 -", "19 data", "20 representante", "responsáveis pelas informações", "responsaveis pelas informacoes", "18 -", "18.1"],
     ) if "bloco_tabela_por_termos" in globals() else []
     texto_base = "\n".join(bloco_16) if bloco_16 else texto
-    linhas = [re.sub(r"\s+", " ", l).strip() for l in texto_base.splitlines() if l.strip()]
+    linhas_brutas = [re.sub(r"\s+", " ", l).strip() for l in texto_base.splitlines() if l.strip()]
+    linhas = agrupar_linhas_campo16(linhas_brutas)
     responsaveis = []
 
-    registro_conselho = r"(?:(?:CRM|CREA|CRQ|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:/[A-Z]{2})?|\d{3,8}(?:\s*[A-Z]-[A-Z]{2}|/[A-Z]{2})?)"
+    registro_conselho = r"(?:(?:CRM|CREA|CRQ|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:/[A-Z]{2})?|\d{3,8}(?:\s*[A-Z]-[A-Z]{2}|/[A-Z]{2}))"
 
     # Padrão principal: período, opcional CPF/NIT, registro profissional, nome
     padroes = [
@@ -1553,7 +1554,7 @@ def extrair_responsaveis_ambientais_linhas(texto):
         rf"(?P<periodo>(?<!\d{{2}}/)\d{{2}}/\d{{4}})\s+(?:(?P<cpf>[\d\.\-]{{8,20}})\s+)?(?P<registro>{registro_conselho})\s+(?P<nome>.+)$",
     ]
     for linha in linhas:
-        if not re.search(r"\b(?:CRM|CREA|CRQ|MTE)\b|\b\d{3,8}(?:\s*[A-Z]-[A-Z]{2}|/[A-Z]{2})?\b", linha, flags=re.IGNORECASE):
+        if not re.search(r"\b(?:CRM|CREA|CRQ|MTE)\b|\b\d{3,8}(?:\s*[A-Z]-[A-Z]{2}|/[A-Z]{2})\b", linha, flags=re.IGNORECASE):
             continue
         for p_linha in padroes_linha:
             m = re.search(p_linha, linha, flags=re.IGNORECASE)
@@ -1619,7 +1620,7 @@ def extrair_responsaveis_ambientais_linhas(texto):
 
     # Fallback para nomes/registros quando a linha veio quebrada
     if not responsaveis:
-        registros = re.findall(r"\b(?:CRM|CREA|CRQ|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:/[A-Z]{2})?\b|\b\d{3,8}(?:\s*[A-Z]-[A-Z]{2}|/[A-Z]{2})?\b", texto_base, flags=re.IGNORECASE)
+        registros = re.findall(r"\b(?:CRM|CREA|CRQ|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:/[A-Z]{2})?\b|\b\d{3,8}(?:\s*[A-Z]-[A-Z]{2}|/[A-Z]{2})\b", texto_base, flags=re.IGNORECASE)
         nomes = re.findall(r"(Dirceu\s+Francisco\s+de\s+Ara[uú]jo\s+Rodrigues|J[oô]natan\s+Ribeiro\s+Duarte|Jonatan\s+Ribeiro\s+Duarte|Marco\s+Aurelio\s+Goldenfum|Marco\s+Aur[eé]lio\s+Goldenfum)", texto_base, flags=re.IGNORECASE)
         periodos = re.findall(r"\b\d{2}/\d{4}\b|\b\d{2}/\d{2}/\d{4}\s*a\s*\d{2}/\d{2}/\d{4}\b", texto_base, flags=re.IGNORECASE)
         cpfs = re.findall(r"\b\d{3}\.?\d{3,6}\.?\d{2,6}-?\d{1,2}\b|\b\d{10,11}\b", texto_base)
@@ -1817,6 +1818,109 @@ def limpar_nome_responsavel_tecnico(nome):
         flags=re.IGNORECASE,
     )[0]
     return re.sub(r"\s+", " ", nome).strip(" -:|")
+
+
+def linha_ruido_ocr_isolada(linha):
+    limpa = re.sub(r"\s+", " ", str(linha or "")).strip(" -:|")
+    if not limpa:
+        return True
+    return bool(re.fullmatch(r"\d{1,4}", limpa))
+
+
+def linha_tem_nome_humano(linha):
+    return bool(re.search(
+        r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]{2,}"
+        r"(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]{2,})+\b",
+        str(linha or "")
+    ))
+
+
+def agrupar_linhas_campo16(linhas):
+    """
+    Monta linhas lógicas do Campo 16.
+    Quebras de OCR com CPF/registro/nome em linhas separadas pertencem ao mesmo responsável.
+    Números isolados não iniciam nova linha.
+    """
+    agrupadas = []
+    atual = ""
+    for linha in linhas:
+        limpa = re.sub(r"\s+", " ", str(linha or "")).strip()
+        if not limpa:
+            continue
+        if linha_ruido_ocr_isolada(limpa):
+            if atual and not re.search(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b|\b\d{10,11}\b", atual):
+                atual = f"{atual} {limpa}".strip()
+            continue
+
+        tem_periodo = bool(re.search(periodo_ppp_regex(), limpa, flags=re.IGNORECASE))
+        tem_doc = bool(re.search(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b|\b\d{10,11}\b", limpa))
+        tem_registro = bool(re.search(r"\b(?:CRM|CREA|CRQ|MTE)\b|\b\d{3,8}\s*(?:/[A-Z]{2}|[A-Z]-[A-Z]{2})\b", limpa, flags=re.IGNORECASE))
+        tem_nome = linha_tem_nome_humano(limpa)
+        nova_linha = tem_periodo or (tem_registro and tem_nome) or (tem_doc and tem_registro)
+
+        if nova_linha and atual:
+            agrupadas.append(atual.strip())
+            atual = limpa
+        elif atual:
+            atual = f"{atual} {limpa}".strip()
+        else:
+            atual = limpa
+    if atual:
+        agrupadas.append(atual.strip())
+    return agrupadas
+
+
+def agrupar_linhas_por_inicio_estrutural(linhas, tipo):
+    agrupadas = []
+    atual = ""
+    for linha in linhas:
+        limpa = re.sub(r"\s+", " ", str(linha or "")).strip()
+        if not limpa:
+            continue
+        if linha_ruido_ocr_isolada(limpa):
+            if tipo == "15":
+                if atual and len(re.sub(r"\D", "", limpa)) >= 5:
+                    atual = f"{atual} {limpa}".strip()
+            elif tipo == "13":
+                if atual and len(re.sub(r"\D", "", limpa)) > 2:
+                    atual = f"{atual} {limpa}".strip()
+            elif atual:
+                atual = f"{atual} {limpa}".strip()
+            continue
+
+        tem_periodo = bool(re.search(periodo_ppp_regex(), limpa, flags=re.IGNORECASE))
+        if tipo == "13":
+            inicio = tem_periodo
+            continuacao = bool(re.search(r"\b13\.[2-7]\b|CNPJ|Setor|Cargo|Fun[cç][aã]o|CBO|GFIP", limpa, flags=re.IGNORECASE))
+        else:
+            tem_tipo_ou_agente = bool(inferir_tipo_agente_15(limpa) or inferir_fator_risco_15(limpa))
+            inicio = tem_periodo and tem_tipo_ou_agente
+            continuacao = bool(re.search(r"\b15\.[2-9]\b|EPC|EPI|CA\b|NHO|NR[-\s]*15|dB|ppm|mg/m|Qualitativ|Quantitativ|Sim|N[aã]o|NA", limpa, flags=re.IGNORECASE) or tem_tipo_ou_agente)
+
+        if inicio:
+            if atual:
+                agrupadas.append(atual.strip())
+            atual = limpa
+        elif atual and continuacao:
+            atual = f"{atual} {limpa}".strip()
+        elif atual:
+            agrupadas.append(atual.strip())
+            atual = ""
+    if atual:
+        agrupadas.append(atual.strip())
+    return agrupadas
+
+
+def deduplicar_linhas_dict(linhas, chaves):
+    dedup = {}
+    vistos = set()
+    for _, dados in sorted(linhas.items()):
+        chave = tuple(normalizar(str(dados.get(c, ""))) for c in chaves)
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        dedup[len(dedup) + 1] = dados
+    return dedup
 
 
 def normalizar_cbo_ocr(valor):
@@ -2364,6 +2468,14 @@ def normalizar_linha_15(dados):
     if fator:
         dados["15.3"] = fator
 
+    texto_intensidade = " ".join(str(dados.get(k, "")) for k in ["15.3", "15.4", "_linha_original"])
+    intensidade_embutida = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?(?:\s*NEN)?|\b\d+(?:[,.]\d+)?\s*(?:ppm|mg/m[³3])\b|\b(?:qualitativ[ao]|quantitativ[ao]|ND)\b", texto_intensidade, flags=re.IGNORECASE)
+    if intensidade_embutida and (
+        not dados.get("15.4")
+        or re.search(r"\b(?:NHO|NR[-\s]*15|Decibel|Medi[cç])", str(dados.get("15.4", "")), flags=re.IGNORECASE)
+    ):
+        dados["15.4"] = intensidade_embutida.group(0)
+
     for chave in ["15.4", "15.5", "15.6", "15.7", "15.8"]:
         if valor_nao_aplicavel_estrutural(dados.get(chave, "")):
             dados[chave] = "NA"
@@ -2440,6 +2552,7 @@ def extrair_linhas_13_ocr(texto):
         ["13 - lotação", "13 lotação", "13 -", "13.1", "lotação e atribuição", "lotacao e atribuicao"],
         ["14 - profissiografia", "14 profissiografia", "14 -", "14.1", "profissiografia", "15 - exposição", "15 exposicao", "15 -", "fatores de riscos"],
     )
+    bloco = agrupar_linhas_por_inicio_estrutural(bloco, "13")
     linhas = {}
     padrao_periodo = periodo_ppp_regex()
     for linha in bloco:
@@ -2556,7 +2669,7 @@ def extrair_linhas_13_ocr(texto):
                 m_periodo_14 = re.search(periodo_ppp_regex(), resto_texto, flags=re.IGNORECASE)
             if m_periodo_14:
                 primeiro["13.1"] = m_periodo_14.group(1 if m_periodo_14.lastindex else 0).strip()
-    return linhas
+    return deduplicar_linhas_dict(linhas, ["13.1", "13.2", "13.3", "13.4", "13.5", "13.6", "13.7"])
 
 
 def extrair_linhas_14_ocr(texto):
@@ -2583,7 +2696,7 @@ def extrair_linhas_14_ocr(texto):
             pendente = idx
         elif pendente and len(limpa) > 25 and not re.search(r"14\.\d|descri[cç][aã]o|per[ií]odo", limpa, flags=re.IGNORECASE):
             linhas[pendente]["14.2"] = (linhas[pendente].get("14.2", "") + " " + limpa).strip()
-    return linhas
+    return deduplicar_linhas_dict(linhas, ["14.1", "14.2"])
 
 
 def extrair_linhas_15_ocr(texto):
@@ -2594,6 +2707,7 @@ def extrair_linhas_15_ocr(texto):
     )
     if not bloco and re.search(r"15\s*[-:]?.{0,160}(?:Fatores\s+de\s+Riscos|Exposi.{0,4}o)|Fumos\s+met[aá\?]licos|Qu[ií\?]mico", texto or "", flags=re.IGNORECASE | re.DOTALL):
         bloco = (texto or "").splitlines()
+    bloco = agrupar_linhas_por_inicio_estrutural(bloco, "15")
     linhas = {}
     padrao_periodo = periodo_ppp_regex()
     tipo_re = r"F(?:[ií\?]sico)?|Q(?:u[ií\?]mico)?|B(?:iol[oó\?]gico)?|Ergon[oô\?]mico|Acidente|Periculoso"
@@ -2772,7 +2886,7 @@ def extrair_linhas_15_ocr(texto):
                 dados["15.7"] = respostas[1]
             normalizar_linha_15(dados)
             linhas[idx] = dados
-    return linhas
+    return deduplicar_linhas_dict(linhas, ["15.1", "15.2", "15.3", "15.4", "15.5", "15.6", "15.7", "15.8"])
 
 
 def montar_linhas_compostas(texto, campo):
