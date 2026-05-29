@@ -6,6 +6,16 @@ from datetime import datetime
 from io import BytesIO
 
 try:
+    import pdfplumber
+except Exception:
+    pdfplumber = None
+
+try:
+    from pdfminer.high_level import extract_text as pdfminer_extract_text
+except Exception:
+    pdfminer_extract_text = None
+
+try:
     import fitz  # PyMuPDF
 except Exception:
     fitz = None
@@ -899,19 +909,40 @@ def normalizar(texto):
 
 def extrair_texto_pdf(uploaded_file):
     pdf_bytes = uploaded_file.read()
-    texto = ""
+    partes = []
+
+    if pdfplumber is not None:
+        try:
+            with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
+                for page in pdf.pages:
+                    partes.append(page.extract_text(x_tolerance=1, y_tolerance=3) or "")
+                    tabelas = page.extract_tables() or []
+                    for tabela in tabelas:
+                        for linha in tabela or []:
+                            celulas = [re.sub(r"\s+", " ", str(c or "")).strip() for c in linha]
+                            if any(celulas):
+                                partes.append(" | ".join(celulas))
+        except Exception as e:
+            partes.append(f"\n[Extração pdfplumber indisponível/falhou: {e}]\n")
+
+    if pdfminer_extract_text is not None:
+        try:
+            partes.append(pdfminer_extract_text(BytesIO(pdf_bytes)) or "")
+        except Exception as e:
+            partes.append(f"\n[Extração pdfminer indisponível/falhou: {e}]\n")
 
     if fitz is not None:
         try:
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             for page in doc:
-                texto += page.get_text("text") + "\n"
+                partes.append(page.get_text("text") + "\n")
         except Exception as e:
-            texto += f"\n[Erro na extração PyMuPDF: {e}]\n"
+            partes.append(f"\n[Erro na extração PyMuPDF: {e}]\n")
 
-    # OCR fallback se o texto vier muito curto. PPP escaneado costuma vir como imagem,
-    # então preservamos espaços entre colunas para facilitar a reconstrução das tabelas.
-    if len(texto.strip()) < 300 and pytesseract is not None and convert_from_bytes is not None:
+    texto = "\n".join(p for p in partes if p)
+
+    precisa_ocr = len(re.sub(r"\s+", "", texto)) < 300 or not any(t in normalizar(texto) for t in ["lotacao", "registros ambientais", "responsavel pelos registros"])
+    if precisa_ocr and pytesseract is not None and convert_from_bytes is not None:
         try:
             imagens = convert_from_bytes(pdf_bytes, dpi=300)
             for img in imagens:
@@ -920,10 +951,37 @@ def extrair_texto_pdf(uploaded_file):
                     texto += "\n" + pytesseract.image_to_string(img, lang="por", config=config)
                 except Exception:
                     texto += "\n" + pytesseract.image_to_string(img, lang="por+eng", config=config)
+            texto += "\n" + ocr_regioes_tabeladas_ppp(imagens)
         except Exception as e:
             texto += f"\n[OCR não executado ou falhou: {e}]\n"
 
     return texto
+
+
+def ocr_regioes_tabeladas_ppp(imagens):
+    if pytesseract is None:
+        return ""
+    textos = []
+    for pagina, img in enumerate(imagens, start=1):
+        w, h = img.size
+        regioes = [
+            ("13/14", (0, int(h * 0.22), w, int(h * 0.48))),
+            ("15", (0, int(h * 0.42), w, int(h * 0.82))),
+            ("16/18/20", (0, int(h * 0.72), w, h)),
+        ]
+        for nome, caixa in regioes:
+            try:
+                crop = img.crop(caixa)
+                config = "--psm 6 -c preserve_interword_spaces=1"
+                try:
+                    trecho = pytesseract.image_to_string(crop, lang="por", config=config)
+                except Exception:
+                    trecho = pytesseract.image_to_string(crop, lang="por+eng", config=config)
+                if trecho and len(trecho.strip()) > 20:
+                    textos.append(f"\n=== OCR REGIÃO TABELADA {nome} PÁGINA {pagina} ===\n{trecho}")
+            except Exception:
+                continue
+    return "\n".join(textos)
 
 
 def possui(texto_norm, termos):
@@ -2028,7 +2086,8 @@ def inferir_fator_risco_15(texto):
         (["vibracao de corpo inteiro", "vci", "vdvr"], "Vibração de corpo inteiro"),
         (["vibracao de maos e bracos", "vmb", "aren"], "Vibração de mãos e braços"),
         (["hidrocarbonetos aromaticos"], "Hidrocarbonetos aromáticos"),
-        (["hidrocarboneto", "oleo mineral", "oleos minerais"], "Hidrocarbonetos/óleos minerais"),
+        (["hidrocarboneto"], "Hidrocarbonetos"),
+        (["oleo mineral", "oleos minerais"], "Óleos minerais"),
         (["graxa", "lubrificante"], "Graxas/lubrificantes"),
         (["fumos metalicos", "fumo metalico"], "Fumos metálicos"),
         (["poeira respiravel"], "Poeira respirável"),
@@ -2062,6 +2121,94 @@ def inferir_fator_risco_15(texto):
         if any(termo in t for termo in termos):
             return rotulo
     return bruto if bruto and not valor_nao_aplicavel_estrutural(bruto) else ""
+
+
+def extrair_agentes_detectados_campo15(texto):
+    t = normalizar(texto or "")
+    agentes = []
+    regras = [
+        ("Radiações não ionizantes", ["radiacoes nao ionizantes", "radiacao nao ionizante", "radiações não ionizantes", "radiação não ionizante", "onizantes"]),
+        ("Ruído contínuo/intermitente", ["ruido continuo", "ruido intermitente", "ruido", "ruído", "decibel", "db(a)", "db"]),
+        ("Vibração de mãos e braços", ["vibracao de maos e bracos", "vibração de mãos e braços", "maos e bracos", "mãos e braços", "vmb", "aren", "mb)"]),
+        ("Vibração de corpo inteiro", ["vibracao de corpo inteiro", "vibração de corpo inteiro", "vci", "vdvr"]),
+        ("Calor", ["calor", "ibutg"]),
+        ("Umidade", ["umidade"]),
+        ("Fumos metálicos (ferro)", ["fumos metalicos ferro", "fumo metalico ferro", "ferro)"]),
+        ("Fumos metálicos (manganês)", ["fumos metalicos manganes", "fumo metalico manganes", "manganes", "manganês"]),
+        ("Fumos metálicos (silício)", ["fumos metalicos silicio", "fumo metalico silicio", "silicio", "silício"]),
+        ("Fumos metálicos", ["fumos metalicos", "fumos metálicos", "fumo metalico", "fumo metálico", "solda", "soldagem"]),
+        ("Poeira respirável", ["poeira respiravel", "poeira respirável"]),
+        ("Poeira total", ["poeira total"]),
+        ("Poeiras minerais", ["poeiras minerais", "poeira mineral"]),
+        ("Sílica", ["silica", "sílica"]),
+        ("Óleos minerais", ["oleos minerais", "óleos minerais", "oleo mineral", "óleo mineral"]),
+        ("Hidrocarbonetos aromáticos", ["hidrocarbonetos aromaticos", "hidrocarbonetos aromáticos"]),
+        ("Hidrocarbonetos", ["hidrocarboneto", "hidrocarbonetos"]),
+        ("Graxas/lubrificantes", ["graxa", "graxas", "lubrificante", "lubrificantes"]),
+        ("Agrotóxicos/pesticidas", ["agrotoxico", "agrotóxico", "agrotoxicos", "agrotóxicos", "pesticida", "pesticidas"]),
+        ("Domissanitários/tensoativos", ["domissanitario", "domissanitários", "tensoativo", "tensoativos"]),
+        ("Hexano", ["hexano"]),
+        ("Heptano", ["heptano"]),
+        ("Acetona", ["acetona"]),
+        ("Acetato de etila", ["acetato de etila"]),
+        ("Tolueno", ["tolueno"]),
+        ("Solventes", ["solvente", "solventes"]),
+        ("HIV", ["hiv"]),
+        ("Hepatite B", ["hepatite b"]),
+        ("Hepatite C", ["hepatite c"]),
+        ("Vírus", ["virus", "vírus"]),
+        ("Bactérias", ["bacteria", "bactérias", "bacterias"]),
+        ("Fungos", ["fungo", "fungos"]),
+        ("Protozoários", ["protozoario", "protozoários", "protozoarios"]),
+        ("Parasitas", ["parasita", "parasitas"]),
+        ("Microorganismos", ["microorganismo", "microorganismos"]),
+        ("Materiais infectocontagiosos", ["infectocontag"]),
+        ("Agentes biológicos", ["biologico", "biológico", "paciente", "hospital", "enfermagem", "ambulancia", "ambulância"]),
+    ]
+    for rotulo, termos in regras:
+        if any(normalizar(termo) in t for termo in termos):
+            if rotulo not in agentes:
+                agentes.append(rotulo)
+    if "Fumos metálicos" in agentes and any(a.startswith("Fumos metálicos (") for a in agentes):
+        agentes.remove("Fumos metálicos")
+    return agentes
+
+
+def chave_agente_para_rotulo(rotulo):
+    r = normalizar(rotulo)
+    if "radiac" in r:
+        return "radiacoes_nao_ionizantes"
+    if "vibracao de maos" in r:
+        return "vibracao_maos_bracos"
+    if "vibracao de corpo" in r:
+        return "vibracao_corpo_inteiro"
+    if "ruido" in r:
+        return "ruido"
+    if "calor" in r:
+        return "calor"
+    if "umidade" in r:
+        return "umidade"
+    if "fumos metalicos" in r:
+        return "fumos_metalicos"
+    if "poeira" in r or "silica" in r:
+        return "poeiras"
+    if "oleo" in r or "hidrocarbon" in r or "graxa" in r or "lubrificant" in r:
+        return "oleos_minerais"
+    if "agrotoxico" in r or "pesticida" in r:
+        return "agrotoxicos"
+    if "domissanitario" in r or "tensoativo" in r:
+        return "tensoativos_domissanitarios"
+    if any(x in r for x in ["hexano", "heptano", "acetona", "acetato", "tolueno", "solvente"]):
+        return "solventes"
+    if any(x in r for x in ["hiv", "hepatite", "virus", "bacteria", "fungo", "protozoario", "parasita", "microorganismo", "infectocontag", "biologico"]):
+        return "biologicos_hospitalares" if "biologicos_hospitalares" in AGENTES else "biologicos"
+    return ""
+
+
+def slug_agente(rotulo):
+    slug = normalizar(rotulo)
+    slug = re.sub(r"[^a-z0-9]+", "_", slug).strip("_")
+    return slug or "agente"
 
 
 def refinar_linha_13_por_repeticao(dados, resto):
@@ -2465,6 +2612,9 @@ def normalizar_linha_15(dados):
     fator = inferir_fator_risco_15(dados.get("15.3", ""))
     if not fator:
         fator = inferir_fator_risco_15(linha_original)
+    agentes_detectados = extrair_agentes_detectados_campo15(" ".join(str(dados.get(k, "")) for k in ["15.2", "15.3", "_linha_original"]))
+    if agentes_detectados:
+        dados["_agentes_detectados"] = " | ".join(agentes_detectados)
     if fator:
         dados["15.3"] = fator
 
@@ -3175,7 +3325,7 @@ def analisar_campos(texto):
 def corpus_agentes_campo15(texto):
     partes = []
     for dados in extrair_linhas_15_ocr(texto).values():
-        for chave in ["15.2", "15.3", "15.4", "15.5"]:
+        for chave in ["15.2", "15.3", "15.4", "15.5", "_agentes_detectados"]:
             valor = dados.get(chave, "")
             if valor and not valor_ausente_estrutural(valor):
                 partes.append(str(valor))
@@ -3234,13 +3384,34 @@ def analisar_agentes(texto):
         return []
     texto_norm = normalizar(corpus_15)
     agentes = []
+    vistos = set()
+    bases_detectadas = set()
+
+    for rotulo in extrair_agentes_detectados_campo15(corpus_15):
+        chave_base = chave_agente_para_rotulo(rotulo)
+        if not chave_base or chave_base not in AGENTES:
+            continue
+        bases_detectadas.add(chave_base)
+        item = montar_item_agente(chave_base, AGENTES[chave_base])
+        item["agente"] = slug_agente(rotulo)
+        item["agente_original"] = rotulo
+        item["enquadramento"] = f"Agente identificado no Campo 15 do PPP: {rotulo}. " + item.get("enquadramento", "")
+        chave_item = item["agente"]
+        if chave_item not in vistos:
+            agentes.append(item)
+            vistos.add(chave_item)
 
     for chave, info in AGENTES.items():
+        if chave in bases_detectadas:
+            continue
+        if chave == "hidrocarbonetos" and "oleos_minerais" in bases_detectadas:
+            continue
         termos_norm = [normalizar(t) for t in info.get("termos", [])]
         if any(t in texto_norm for t in termos_norm):
             item = montar_item_agente(chave, info)
-            if item not in agentes:
+            if item["agente"] not in vistos:
                 agentes.append(item)
+                vistos.add(item["agente"])
 
     tipos = []
     for dados in extrair_linhas_15_ocr(texto).values():
