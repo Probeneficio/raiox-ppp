@@ -832,6 +832,57 @@ AGENTES = {
     },
 }
 
+AGENTES.update({
+    "vibracao_corpo_inteiro": {
+        "grupo": "Físico",
+        "termos": ["vibracao de corpo inteiro", "vibração de corpo inteiro", "vci", "vdvr"],
+        "norma": "NR-15 e normas técnicas de higiene ocupacional aplicáveis",
+        "limite": "Critério técnico conforme intensidade e metodologia informadas no PPP/LTCAT",
+        "metodologia": "Avaliação de vibração de corpo inteiro, com indicação de método, intensidade e período",
+        "fundamento": "Agente físico identificado no Campo 15; exige conferência de intensidade, método técnico e habitualidade."
+    },
+    "vibracao_maos_bracos": {
+        "grupo": "Físico",
+        "termos": ["vibracao de maos e bracos", "vibração de mãos e braços", "vmb", "aren"],
+        "norma": "NR-15 e normas técnicas de higiene ocupacional aplicáveis",
+        "limite": "Critério técnico conforme intensidade e metodologia informadas no PPP/LTCAT",
+        "metodologia": "Avaliação de vibração de mãos e braços, com indicação de método, intensidade e período",
+        "fundamento": "Agente físico identificado no Campo 15; exige conferência de intensidade, método técnico e habitualidade."
+    },
+    "radiacoes_nao_ionizantes": {
+        "grupo": "Físico",
+        "termos": ["radiacoes nao ionizantes", "radiações não ionizantes", "radiacao nao ionizante", "radiação não ionizante", "radiacao solar", "radiação solar"],
+        "norma": "NR-15, conforme agente físico e forma de exposição",
+        "limite": "Avaliação qualitativa ou quantitativa conforme o agente descrito",
+        "metodologia": "LTCAT/laudo técnico com descrição da fonte, intensidade e habitualidade",
+        "fundamento": "Agente físico identificado no Campo 15; exige conferência do tipo de radiação e das condições de exposição."
+    },
+    "agrotoxicos": {
+        "grupo": "Químico",
+        "termos": ["agrotoxico", "agrotóxico", "agrotoxicos", "agrotóxicos", "pesticida", "pesticidas", "defensivo agricola", "defensivo agrícola"],
+        "norma": "NR-15 Anexos 11 e 13, conforme composição química",
+        "limite": "Avaliação qualitativa ou quantitativa conforme substância",
+        "metodologia": "LTCAT/FISPQ com identificação do produto, composição e forma de contato",
+        "fundamento": "Agente químico identificado no Campo 15; exige análise da composição, forma de contato e habitualidade."
+    },
+    "solventes": {
+        "grupo": "Químico",
+        "termos": ["solvente", "solventes", "hexano", "heptano", "acetona", "acetato de etila", "tolueno", "ppm"],
+        "norma": "NR-15 Anexos 11 e 13, conforme substância",
+        "limite": "Quantitativo ou qualitativo conforme substância e concentração",
+        "metodologia": "LTCAT/FISPQ com concentração, método de avaliação e forma de contato",
+        "fundamento": "Agente químico identificado no Campo 15; exige análise por substância e concentração quando houver limite de tolerância."
+    },
+    "biologicos_hospitalares": {
+        "grupo": "Biológico",
+        "termos": ["hiv", "hepatite b", "hepatite c", "protozoario", "protozoários", "parasita", "parasitas", "microorganismo", "microorganismos", "toxina", "toxinas", "pacientes", "ambiente hospitalar", "enfermagem", "medico", "médico", "motorista de ambulancia", "motorista de ambulância"],
+        "norma": "NR-15 Anexo 14",
+        "limite": "Qualitativo",
+        "metodologia": "Descrição da atividade e do risco de contato com pacientes, materiais ou ambientes contaminados",
+        "fundamento": BASE_LEGAL["biologicos"]["nr15_14"] + " " + BASE_LEGAL["biologicos"]["tema_211_tnu"]
+    },
+})
+
 
 # ============================================================
 # FUNÇÕES UTILITÁRIAS
@@ -906,21 +957,27 @@ def extrair_cnae(texto):
     texto = texto or ""
 
     # Prioriza preenchimento manual
-    manual = re.search(r"(?im)^\s*3\s*[-:]\s*CNAE\s*:\s*([0-9\-\s/\.]{5,20})\s*$", texto)
+    manual = re.search(r"(?im)^\s*3\s*[-:]\s*CNAE\s*:\s*([0-9\-\s/\.]{5,20}|NA|N/?A|N[aã]o\s+aplic[aá]vel)\s*$", texto)
     if manual:
-        return normalizar_codigo_cnae(manual.group(1))
+        valor = manual.group(1)
+        return "NA" if re.search(r"^(?:NA|N/?A|N[aã]o\s+aplic[aá]vel)$", valor.strip(), flags=re.IGNORECASE) else normalizar_codigo_cnae(valor)
 
     padroes = [
+        r"(?:3\s*[-:]?\s*)?CNAE\s*[:\-]?\s*(NA|N/?A|N[aã]o\s+aplic[aá]vel)",
         r"(?:3\s*[-:]?\s*)?CNAE\s*[:\-]?\s*([0-9]{4}\s*[-]?\s*[0-9]\s*/\s*[0-9]{2})",
+        r"(?:3\s*[-:]?\s*)?CNAE\s*[:\-]?\s*([0-9]{2}\.?[0-9]{2}\s*[-]?\s*[0-9]\s*[-/]?\s*[0-9]{2})",
         r"CNAE[^0-9]{0,80}([0-9]{4}\s*[-]?\s*[0-9]\s*/\s*[0-9]{2})",
+        r"CNAE[^0-9]{0,80}([0-9]{2}\.?[0-9]{2}\s*[-]?\s*[0-9]\s*[-/]?\s*[0-9]{2})",
         r"\b([0-9]{4}\s*-\s*[0-9]\s*/\s*[0-9]{2})\b",
+        r"\b([0-9]{2}\.?[0-9]{2}\s*-\s*[0-9]\s*-\s*[0-9]{2})\b",
         r"\b([0-9]{5}\s*/\s*[0-9]{2})\b",
         r"\b([0-9]{4}\s+[0-9]\s+[0-9]{2})\b",
     ]
     for p in padroes:
         m = re.search(p, texto, flags=re.IGNORECASE)
         if m:
-            return normalizar_codigo_cnae(m.group(1))
+            valor = m.group(1).strip()
+            return "NA" if re.search(r"^(?:NA|N/?A|N[aã]o\s+aplic[aá]vel)$", valor, flags=re.IGNORECASE) else normalizar_codigo_cnae(valor)
 
     return ""
 
@@ -986,7 +1043,11 @@ def limpar_valor_campo_escalar(numero, valor):
 
 def limpar_documento_numerico(valor):
     digitos = re.sub(r"\D", "", str(valor or ""))
-    return digitos if len(digitos) in {10, 11} else ""
+    if len(digitos) not in {10, 11}:
+        return ""
+    if len(set(digitos)) == 1:
+        return ""
+    return digitos
 
 
 def normalizar_cpf_nit_visual(valor):
@@ -1473,7 +1534,7 @@ def extrair_responsaveis_ambientais_linhas(texto):
     linhas = [re.sub(r"\s+", " ", l).strip() for l in texto_base.splitlines() if l.strip()]
     responsaveis = []
 
-    registro_conselho = r"(?:(?:CRM|CREA|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:/[A-Z]{2})?|\d{3,8}/[A-Z]{2})"
+    registro_conselho = r"(?:(?:CRM|CREA|CRQ|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:/[A-Z]{2})?|\d{3,8}(?:\s*[A-Z]-[A-Z]{2}|/[A-Z]{2})?)"
 
     # Padrão principal: período, opcional CPF/NIT, registro profissional, nome
     padroes = [
@@ -1492,7 +1553,7 @@ def extrair_responsaveis_ambientais_linhas(texto):
         rf"(?P<periodo>(?<!\d{{2}}/)\d{{2}}/\d{{4}})\s+(?:(?P<cpf>[\d\.\-]{{8,20}})\s+)?(?P<registro>{registro_conselho})\s+(?P<nome>.+)$",
     ]
     for linha in linhas:
-        if not re.search(r"\b(?:CRM|CREA|MTE)\b|\b\d{3,8}/[A-Z]{2}\b", linha, flags=re.IGNORECASE):
+        if not re.search(r"\b(?:CRM|CREA|CRQ|MTE)\b|\b\d{3,8}(?:\s*[A-Z]-[A-Z]{2}|/[A-Z]{2})?\b", linha, flags=re.IGNORECASE):
             continue
         for p_linha in padroes_linha:
             m = re.search(p_linha, linha, flags=re.IGNORECASE)
@@ -1558,7 +1619,7 @@ def extrair_responsaveis_ambientais_linhas(texto):
 
     # Fallback para nomes/registros quando a linha veio quebrada
     if not responsaveis:
-        registros = re.findall(r"\b(?:CRM|CREA|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:/[A-Z]{2})?\b|\b\d{3,8}/[A-Z]{2}\b", texto_base, flags=re.IGNORECASE)
+        registros = re.findall(r"\b(?:CRM|CREA|CRQ|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:/[A-Z]{2})?\b|\b\d{3,8}(?:\s*[A-Z]-[A-Z]{2}|/[A-Z]{2})?\b", texto_base, flags=re.IGNORECASE)
         nomes = re.findall(r"(Dirceu\s+Francisco\s+de\s+Ara[uú]jo\s+Rodrigues|J[oô]natan\s+Ribeiro\s+Duarte|Jonatan\s+Ribeiro\s+Duarte|Marco\s+Aurelio\s+Goldenfum|Marco\s+Aur[eé]lio\s+Goldenfum)", texto_base, flags=re.IGNORECASE)
         periodos = re.findall(r"\b\d{2}/\d{4}\b|\b\d{2}/\d{2}/\d{4}\s*a\s*\d{2}/\d{2}/\d{4}\b", texto_base, flags=re.IGNORECASE)
         cpfs = re.findall(r"\b\d{3}\.?\d{3,6}\.?\d{2,6}-?\d{1,2}\b|\b\d{10,11}\b", texto_base)
@@ -1766,6 +1827,139 @@ def normalizar_cbo_ocr(valor):
     return bruto
 
 
+def valor_nao_aplicavel_estrutural(valor):
+    v = normalizar(str(valor or "")).strip()
+    return v in {"na", "n/a", "nao aplicavel", "nao se aplica", "-", "sem risco", "ausente"}
+
+
+def normalizar_resposta_sn(valor):
+    bruto = str(valor or "").strip()
+    v = normalizar(bruto)
+    if v in {"s", "sim", "eficaz"}:
+        return "Sim"
+    if v in {"n", "nao", "não", "nao eficaz", "ineficaz"}:
+        return "Não"
+    if valor_nao_aplicavel_estrutural(bruto):
+        return "NA"
+    return bruto
+
+
+def ppp_sem_agentes_declarados(texto):
+    tn = normalizar(texto or "")
+    padroes = [
+        "ausencia de riscos fisico, quimico e biologico",
+        "ausencia de risco fisico, quimico e biologico",
+        "ausencia de riscos fisicos, quimicos e biologicos",
+        "ausencia de agentes nocivos",
+        "sem agentes nocivos",
+        "sem riscos ocupacionais",
+        "nao ha exposicao a fatores de risco",
+        "nao ha registro de exposicao",
+    ]
+    return any(p in tn for p in padroes)
+
+
+def documento_legado_ppp(texto):
+    tn = normalizar(texto or "")
+    return any(t in tn for t in [
+        "dss-8030", "dirben 8030", "sb-40", "formulario antigo",
+        "laudo tecnico", "descricao das atividades", "agentes nocivos narrados"
+    ]) and "perfil profissiografico previdenciario" not in tn[:500]
+
+
+def corpus_agentes_legado(texto):
+    texto = texto or ""
+    if not documento_legado_ppp(texto):
+        return ""
+    linhas = []
+    termos = [
+        "agentes nocivos", "agente nocivo", "risco", "riscos", "exposição", "exposicao",
+        "atividade", "atividades", "setor", "função", "funcao", "laudo"
+    ]
+    for linha in texto.splitlines():
+        ln = normalizar(linha)
+        if any(t in ln for t in termos) or inferir_fator_risco_15(linha):
+            linhas.append(re.sub(r"\s+", " ", linha).strip())
+    return " ".join(linhas[:60])
+
+
+def inferir_tipo_agente_15(texto):
+    t = normalizar(texto or "")
+    if re.fullmatch(r"f", t) or any(p in t for p in [
+        "fisico", "ruido", "vibracao", "vci", "vmb", "vdvr", "aren",
+        "calor", "umidade", "radiacao", "radiação", "solar"
+    ]):
+        return "Físico"
+    if re.fullmatch(r"q", t) or any(p in t for p in [
+        "quimico", "hidrocarbon", "oleo", "oleos", "graxa", "lubrificante",
+        "fumos", "poeira", "silica", "agrotoxico", "pesticida", "domissanitario",
+        "tensoativo", "hexano", "heptano", "acetona", "acetato", "tolueno",
+        "solvente", "dioxido de titanio", "silicato"
+    ]):
+        return "Químico"
+    if re.fullmatch(r"b", t) or any(p in t for p in [
+        "biologico", "virus", "hiv", "hepatite", "bacteria", "fungo",
+        "protozoario", "parasita", "microorganismo", "infectocontag",
+        "toxina", "paciente", "hospital", "enfermagem", "ambulancia"
+    ]):
+        return "Biológico"
+    if any(p in t for p in ["ergonomico", "ergonômico"]):
+        return "Ergonômico"
+    if any(p in t for p in ["acidente", "periculoso"]):
+        return "Acidente"
+    return ""
+
+
+def inferir_fator_risco_15(texto):
+    bruto = re.sub(r"\s+", " ", str(texto or "")).strip(" -:|")
+    t = normalizar(bruto)
+    mapa = [
+        (["ruido previdenciario"], "Ruído previdenciário"),
+        (["ruido trabalhista"], "Ruído trabalhista"),
+        (["ruido continuo", "ruido intermitente", "ruido"], "Ruído"),
+        (["radiacao solar", "radiação solar"], "Radiação solar"),
+        (["radiacoes nao ionizantes", "radiacao nao ionizante", "radiações não ionizantes"], "Radiações não ionizantes"),
+        (["calor"], "Calor"),
+        (["umidade"], "Umidade"),
+        (["vibracao de corpo inteiro", "vci", "vdvr"], "Vibração de corpo inteiro"),
+        (["vibracao de maos e bracos", "vmb", "aren"], "Vibração de mãos e braços"),
+        (["hidrocarbonetos aromaticos"], "Hidrocarbonetos aromáticos"),
+        (["hidrocarboneto", "oleo mineral", "oleos minerais"], "Hidrocarbonetos/óleos minerais"),
+        (["graxa", "lubrificante"], "Graxas/lubrificantes"),
+        (["fumos metalicos", "fumo metalico"], "Fumos metálicos"),
+        (["poeira respiravel"], "Poeira respirável"),
+        (["poeiras minerais", "poeira mineral"], "Poeiras minerais"),
+        (["silica"], "Sílica"),
+        (["agrotoxico", "pesticida"], "Agrotóxicos/pesticidas"),
+        (["domissanitario", "tensoativo"], "Domissanitários/tensoativos"),
+        (["hexano"], "Hexano"),
+        (["heptano"], "Heptano"),
+        (["acetona"], "Acetona"),
+        (["acetato de etila"], "Acetato de etila"),
+        (["tolueno"], "Tolueno"),
+        (["solvente"], "Solventes"),
+        (["dioxido de titanio"], "Dióxido de titânio"),
+        (["silicato"], "Silicatos"),
+        (["poeiras vegetais", "poeira vegetal"], "Poeiras vegetais"),
+        (["hiv"], "HIV"),
+        (["hepatite b"], "Hepatite B"),
+        (["hepatite c"], "Hepatite C"),
+        (["virus"], "Vírus"),
+        (["bacteria"], "Bactérias"),
+        (["fungo"], "Fungos"),
+        (["protozoario"], "Protozoários"),
+        (["parasita"], "Parasitas"),
+        (["microorganismo"], "Microorganismos"),
+        (["infectocontag"], "Materiais infectocontagiosos"),
+        (["toxina"], "Toxinas"),
+        (["paciente", "hospital", "enfermagem", "ambulancia"], "Agentes biológicos"),
+    ]
+    for termos, rotulo in mapa:
+        if any(termo in t for termo in termos):
+            return rotulo
+    return bruto if bruto and not valor_nao_aplicavel_estrutural(bruto) else ""
+
+
 def refinar_linha_13_por_repeticao(dados, resto):
     texto = re.sub(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b", " ", str(resto or ""))
     texto = re.sub(r"\s+", " ", texto).strip(" -:|")
@@ -1773,7 +1967,7 @@ def refinar_linha_13_por_repeticao(dados, resto):
     if not cbo:
         return dados
     dados["13.6"] = normalizar_cbo_ocr(cbo.group(0))
-    gfip = re.search(r"\b(?:00|01|02|03|04|05|06|07|08|09)\b", texto[cbo.end():])
+    gfip = re.search(r"\b(?:00|01|02|03|04|05|06|07|08|09|0515|[0-9]{1,4})\b", texto[cbo.end():])
     if gfip:
         dados["13.7"] = gfip.group(0)
     antes = texto[:cbo.start()].strip(" -:|")
@@ -2158,28 +2352,35 @@ def extrair_ca_linha_15(texto):
 
 def normalizar_linha_15(dados):
     linha_original = str(dados.get("_linha_original", ""))
-    if re.search(r"f[ií\?]sico|f.sico", str(dados.get("15.2", "")), flags=re.IGNORECASE):
-        dados["15.2"] = "Físico"
-    elif re.search(r"qu[ií\?]mico|qu.mico", str(dados.get("15.2", "")), flags=re.IGNORECASE):
-        dados["15.2"] = "Químico"
-    elif re.search(r"biol[oó\?]gico|biol.gico", str(dados.get("15.2", "")), flags=re.IGNORECASE):
-        dados["15.2"] = "Biológico"
+    tipo = inferir_tipo_agente_15(dados.get("15.2", ""))
+    if not tipo:
+        tipo = inferir_tipo_agente_15(" ".join(str(dados.get(k, "")) for k in ["15.3", "_linha_original"]))
+    if tipo:
+        dados["15.2"] = tipo
 
-    if re.search(r"ru[ií\?]do|ru.do", str(dados.get("15.3", "")), flags=re.IGNORECASE):
-        dados["15.3"] = "Ruído"
-    elif re.search(r"fumos?\s+met.{0,3}licos?", str(dados.get("15.3", "")), flags=re.IGNORECASE):
-        dados["15.3"] = "Fumos metálicos"
+    fator = inferir_fator_risco_15(dados.get("15.3", ""))
+    if not fator:
+        fator = inferir_fator_risco_15(linha_original)
+    if fator:
+        dados["15.3"] = fator
+
+    for chave in ["15.4", "15.5", "15.6", "15.7", "15.8"]:
+        if valor_nao_aplicavel_estrutural(dados.get(chave, "")):
+            dados[chave] = "NA"
 
     if dados.get("15.4"):
-        m = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?", dados["15.4"], flags=re.IGNORECASE)
+        m = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?(?:\s*NEN)?", dados["15.4"], flags=re.IGNORECASE)
         if m:
             dados["15.4"] = m.group(0)
+        elif re.search(r"\b(?:qualitativ[ao]|quantitativ[ao]|ND|ppm|mg/m)\b", dados["15.4"], flags=re.IGNORECASE):
+            dados["15.4"] = re.sub(r"\s+", " ", dados["15.4"]).strip()
     texto_tecnica = " ".join(str(dados.get(k, "")) for k in ["15.4", "15.5", "15.6", "_linha_original"])
     if dados.get("15.5"):
-        m = re.search(r"(?:Medi[cç\?].{0,4}o\s+de\s+NPS\s*-\s*)?(?:Decibel.{0,3}metro|Decibelimetro|Dos.{0,3}metro|NHO[-\s]*01|Fundacentro|NR[-\s]*15)", texto_tecnica, flags=re.IGNORECASE)
+        m = re.search(r"(?:Medi[cç\?].{0,4}o\s+de\s+NPS\s*-\s*)?(?:Decibel.{0,3}metro|Decibelimetro|Dos.{0,3}metro|NHO[-\s]*01|NHO\s*01|Fundacentro|NR[-\s]*15(?:\s*Anexo\s*\d+)?)", texto_tecnica, flags=re.IGNORECASE)
         if m:
             dados["15.5"] = re.sub(r"\s+", " ", m.group(0)).strip()
-    respostas = re.findall(r"\b(N[aã\?]o|Sim|NA)\b", linha_original, flags=re.IGNORECASE)
+    respostas = re.findall(r"\b(N[aã\?]o\s+se\s+aplica|N[aã\?]o|Sim|S|N|NA|Eficaz|N[aã\?]o\s+eficaz)\b", linha_original, flags=re.IGNORECASE)
+    respostas = [normalizar_resposta_sn(r) for r in respostas]
     valor_15_6 = normalizar(str(dados.get("15.6", "")))
     valor_15_7 = normalizar(str(dados.get("15.7", "")))
     if respostas and (not dados.get("15.6") or valor_15_6 not in {"nao", "sim", "na", "nao se aplica"}):
@@ -2265,7 +2466,7 @@ def extrair_linhas_13_ocr(texto):
         cbo = re.search(r"\b\d{4,6}(?:-\d{1,2})?\b|\b\d{2}\.?\d{2}-\d{2}\b", resto)
         if cbo:
             dados["13.6"] = normalizar_cbo_ocr(cbo.group(0))
-        gfip = re.search(r"\b(?:00|01|02|03|04|05|06|07|08|09)\b", resto)
+        gfip = re.search(r"\b(?:00|01|02|03|04|05|06|07|08|09|0515)\b", resto)
         if gfip:
             dados["13.7"] = gfip.group(0)
         if cbo and not (dados.get("13.4") and dados.get("13.5")):
@@ -2315,7 +2516,7 @@ def extrair_linhas_13_ocr(texto):
             elif codigo == "13.3":
                 padrao = r"13\.3\s*[-:]?\s*Setor[^\n:]*[:\-]?\s*([^\n|]+)"
             elif codigo == "13.7":
-                padrao = r"13\.7\s*[-:]?\s*(?:C[oó]d\.?\s*)?GFIP(?:/eSocial)?\s*[:\-]?\s*([0-9]{1,2})"
+                padrao = r"13\.7\s*[-:]?\s*(?:C[oó]d\.?\s*)?GFIP(?:/eSocial)?\s*[:\-]?\s*([0-9]{1,4})"
             elif codigo == "13.6":
                 padrao = r"13\.6\s*[-:]?\s*CBO\s*[:\-]?\s*([0-9]{4,6}(?:-\d{1,2})?|[0-9]{2}\.?[0-9]{2}-[0-9]{2})"
             else:
@@ -2395,7 +2596,7 @@ def extrair_linhas_15_ocr(texto):
         bloco = (texto or "").splitlines()
     linhas = {}
     padrao_periodo = periodo_ppp_regex()
-    tipo_re = r"F[ií\?]sico|Qu[ií\?]mico|Biol[oó\?]gico|Ergon[oô\?]mico|Acidente|Periculoso"
+    tipo_re = r"F(?:[ií\?]sico)?|Q(?:u[ií\?]mico)?|B(?:iol[oó\?]gico)?|Ergon[oô\?]mico|Acidente|Periculoso"
     ultimo_idx = None
     for linha in bloco:
         limpa = re.sub(r"\s+", " ", linha).strip()
@@ -2406,16 +2607,16 @@ def extrair_linhas_15_ocr(texto):
             m = re.search(rf"(?P<periodo>(?:0[1-9]|[12]\d|3[01])/(?:0[1-9]|1[0-2])/\d{{4}}|(?:0[1-9]|1[0-2])/\d{{4}})\s+a\s+(?P<tipo>{tipo_re})\s+(?P<resto>.+)", linha_parse, flags=re.IGNORECASE)
             periodo_aberto = bool(m)
         if not m:
-            if ultimo_idx and re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB|Medi[cç\?].{0,4}o\s+de\s+NPS|Decibel", limpa, flags=re.IGNORECASE):
+            if ultimo_idx and re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB|Medi[cç\?].{0,4}o\s+de\s+NPS|Decibel|NHO[-\s]*01|NR[-\s]*15|ppm|mg/m", limpa, flags=re.IGNORECASE):
                 base = linhas.get(ultimo_idx, {})
-                intensidade = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?(?:\s*\(\d{2}/\d{2}/\d{4}\))?", limpa, flags=re.IGNORECASE)
-                tecnica = re.search(r"(?:Medi[cç\?].{0,4}o\s+de\s+NPS\s*-\s*)?(?:Decibel.{0,3}metro|Decibelimetro|Dos.{0,3}metro|NHO[-\s]*01|Fundacentro|NR[-\s]*15)", limpa, flags=re.IGNORECASE)
+                intensidade = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?(?:\s*\(\d{2}/\d{2}/\d{4}\))?|\b\d+(?:[,.]\d+)?\s*(?:ppm|mg/m[³3])\b", limpa, flags=re.IGNORECASE)
+                tecnica = re.search(r"(?:Medi[cç\?].{0,4}o\s+de\s+NPS\s*-\s*)?(?:Decibel.{0,3}metro|Decibelimetro|Dos.{0,3}metro|NHO[-\s]*01|NHO\s*01|Fundacentro|NR[-\s]*15(?:\s*Anexo\s*\d+)?)", limpa, flags=re.IGNORECASE)
                 if not intensidade:
                     if tecnica and not base.get("15.5"):
                         base["15.5"] = re.sub(r"\s+", " ", tecnica.group(0)).strip()
                         normalizar_linha_15(base)
                     continue
-                intensidade_valor = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?", intensidade.group(0), flags=re.IGNORECASE).group(0)
+                intensidade_valor = intensidade.group(0)
                 if not base.get("15.4"):
                     base["15.4"] = intensidade.group(0)
                     if tecnica and not base.get("15.5"):
@@ -2458,7 +2659,7 @@ def extrair_linhas_15_ocr(texto):
         resto = m.group("resto").strip()
         partes = dividir_colunas_ocr(resto)
         if len(partes) <= 1:
-            partes = [p.strip() for p in re.split(r"\s{2,}| (?=NA\b|N[aã\?]o\b|Sim\b|Qualitativ|Quantitativ|\d{2,3}[,.]\d|Medi[cç\?][aã\?]o|Decibel|NHO)", resto) if p.strip()]
+            partes = [p.strip() for p in re.split(r"\s{2,}| (?=NA\b|N[aã\?]o\b|Sim\b|S\b|N\b|Eficaz\b|Qualitativ|Quantitativ|ND\b|\d{2,3}[,.]\d|ppm\b|mg/m|Medi[cç\?][aã\?]o|Decibel|NHO|NR[-\s]*15)", resto) if p.strip()]
         dados = {
             "15.1": (m.group("periodo").strip() + " a atual") if periodo_aberto else m.group("periodo").strip(),
             "15.2": m.group("tipo").strip(),
@@ -2487,11 +2688,11 @@ def extrair_linhas_15_ocr(texto):
                 contexto = " ".join(bloco_linhas[:8])
 
             if not dados.get("15.4"):
-                intensidade = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?", contexto, flags=re.IGNORECASE)
+                intensidade = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?|\b\d+(?:[,.]\d+)?\s*(?:ppm|mg/m[³3])\b|\b(?:qualitativ[ao]|quantitativ[ao]|ND)\b", contexto, flags=re.IGNORECASE)
                 if intensidade:
                     dados["15.4"] = intensidade.group(0)
             if not dados.get("15.5"):
-                tecnica = re.search(r"(?:Medi[cç\?].{0,4}o\s+de\s+NPS\s*-\s*)?(?:Decibel.{0,3}metro|Dos.{0,3}metro|NHO[-\s]*01|Fundacentro|NR[-\s]*15)", contexto, flags=re.IGNORECASE)
+                tecnica = re.search(r"(?:Medi[cç\?].{0,4}o\s+de\s+NPS\s*-\s*)?(?:Decibel.{0,3}metro|Dos.{0,3}metro|NHO[-\s]*01|NHO\s*01|Fundacentro|NR[-\s]*15(?:\s*Anexo\s*\d+)?)", contexto, flags=re.IGNORECASE)
                 if tecnica:
                     dados["15.5"] = re.sub(r"\s+", " ", tecnica.group(0)).strip()
             if not dados.get("15.6"):
@@ -2503,10 +2704,47 @@ def extrair_linhas_15_ocr(texto):
                 if len(respostas) >= 2:
                     dados["15.7"] = respostas[1]
             normalizar_linha_15(dados)
+    if not linhas and ppp_sem_agentes_declarados(texto):
+        linhas[1] = {
+            "15.1": "NA",
+            "15.2": "NA",
+            "15.3": "Ausência de riscos físico, químico e biológico",
+            "15.4": "NA",
+            "15.5": "NA",
+            "15.6": "NA",
+            "15.7": "NA",
+            "15.8": "NA",
+            "15.9": "NA",
+            "15.9 [01]": "NA",
+            "15.9 [02]": "NA",
+            "15.9 [03]": "NA",
+            "15.9 [04]": "NA",
+            "15.9 [05]": "NA",
+            "_linha_original": "PPP sem agentes nocivos declarados",
+        }
+    if not linhas and documento_legado_ppp(texto):
+        legado = corpus_agentes_legado(texto)
+        fator = inferir_fator_risco_15(legado)
+        tipo = inferir_tipo_agente_15(fator or legado)
+        periodo = ""
+        m_periodo_legado = re.search(periodo_ppp_regex(), texto or "", flags=re.IGNORECASE)
+        if m_periodo_legado:
+            periodo = m_periodo_legado.group(0)
+        if fator or tipo:
+            linhas[1] = {
+                "15.1": periodo or "não localizado",
+                "15.2": tipo or "não localizado",
+                "15.3": fator or "não localizado",
+                "15.4": "não extraída",
+                "15.5": "documento legado / narrativa",
+                "_linha_original": re.sub(r"\s+", " ", legado[:400]).strip(),
+            }
     if not linhas:
         texto_bloco = "\n".join(bloco) if bloco else (texto or "")
         m_periodo = re.search(periodo_ppp_regex(), texto_bloco, flags=re.IGNORECASE)
-        if m_periodo and re.search(r"ru[ií]do|hidrocarbonetos|poeiras|f[ií]sico|qu[ií]mico", texto_bloco, flags=re.IGNORECASE):
+        tipo_fallback = inferir_tipo_agente_15(texto_bloco)
+        fator_fallback = inferir_fator_risco_15(texto_bloco)
+        if m_periodo and (tipo_fallback or fator_fallback):
             idx = 1
             dados = {"15.1": m_periodo.group(0).strip(), "_linha_original": re.sub(r"\s+", " ", texto_bloco[:400]).strip()}
             for linha_coluna in bloco:
@@ -2517,12 +2755,10 @@ def extrair_linhas_15_ocr(texto):
                 if len(valores) >= 3:
                     preencher_por_ordem(dados, ["15.1", "15.2", "15.3", "15.4", "15.5", "15.6", "15.7", "15.8"], valores)
                     break
-            if re.search(r"f[ií\?]sico|f.sico", texto_bloco, flags=re.IGNORECASE):
-                dados["15.2"] = "Físico"
-            elif re.search(r"qu[ií\?]mico|qu.mico", texto_bloco, flags=re.IGNORECASE):
-                dados["15.2"] = "Químico"
-            if re.search(r"ru[ií\?]do|ru.do", texto_bloco, flags=re.IGNORECASE):
-                dados["15.3"] = "Ruído"
+            if tipo_fallback:
+                dados["15.2"] = tipo_fallback
+            if fator_fallback:
+                dados["15.3"] = fator_fallback
             intensidade = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?", texto_bloco, flags=re.IGNORECASE)
             if intensidade:
                 dados["15.4"] = intensidade.group(0)
@@ -2703,11 +2939,15 @@ def montar_linhas_compostas(texto, campo):
             subdados[numero] = {"nome": nome, "valor": valor}
             if valor_ausente_estrutural(valor):
                 incompletos.append(numero)
+        valores_linha = [d.get("valor", "") for d in subdados.values() if d.get("valor")]
+        status_linha = "INCOMPLETO" if incompletos else "CONFORME/LOCALIZADO"
+        if not incompletos and valores_linha and all(valor_nao_aplicavel_estrutural(v) for v in valores_linha):
+            status_linha = "LOCALIZADO — NÃO APLICÁVEL"
         linhas.append({
             "linha": idx,
             "valor_original": dados.get("_linha_original", ""),
             "subcampos": subdados,
-            "status": "INCOMPLETO" if incompletos else "CONFORME/LOCALIZADO",
+            "status": status_linha,
             "campos_incompletos": incompletos,
         })
     return linhas
@@ -2722,6 +2962,13 @@ def campo_estruturado_para_resultado(campo, texto):
     if campo.get("composto"):
         linhas = montar_linhas_compostas(texto, campo)
         incompleto = any(l["status"] == "INCOMPLETO" for l in linhas)
+        possui_valor_estruturado = any(
+            any(
+                d.get("valor") and not valor_ausente_estrutural(d.get("valor"))
+                for d in linha.get("subcampos", {}).values()
+            )
+            for linha in linhas
+        )
         for subnumero, subnome in campo.get("subcampos", []):
             valores = []
             linhas_subcampo = []
@@ -2732,16 +2979,20 @@ def campo_estruturado_para_resultado(campo, texto):
                 linhas_subcampo.append({
                     "linha": linha["linha"],
                     "valor": valor,
-                    "status": "CONFORME/LOCALIZADO" if valor else "INCOMPLETO",
+                    "status": "CONFORME/LOCALIZADO" if valor and not valor_ausente_estrutural(valor) else "INCOMPLETO",
                 })
-            sub_incompleto = any(not valor for valor in valores)
+            sub_incompleto = any(valor_ausente_estrutural(valor) for valor in valores)
+            sub_possui_valor = any(valor and not valor_ausente_estrutural(valor) for valor in valores)
+            sub_status = "INCOMPLETO" if sub_incompleto else "CONFORME/LOCALIZADO"
+            if sub_incompleto and sub_possui_valor:
+                sub_status = "PARCIALMENTE LOCALIZADO"
             subcampos[subnumero] = {
                 "numero": subnumero,
                 "nome": subnome,
                 "valor_extraido": " | ".join(v for v in valores if v),
                 "subcampos": {},
                 "linhas": linhas_subcampo,
-                "status": "INCOMPLETO" if sub_incompleto else "CONFORME/LOCALIZADO",
+                "status": sub_status,
                 "criticidade": campo["criticidade"] if sub_incompleto else "OK",
                 "fundamento_juridico": campo["fundamento"],
                 "estrategia": estrategia_campo_estruturado(subnumero),
@@ -2758,8 +3009,14 @@ def campo_estruturado_para_resultado(campo, texto):
     else:
         valor_extraido = extrair_valor_escalar_estruturado(texto, campo)
         incompleto = not bool(valor_extraido)
+        possui_valor_estruturado = bool(valor_extraido)
 
-    status = "INCOMPLETO" if incompleto else "CONFORME/LOCALIZADO"
+    if incompleto:
+        status = "PARCIALMENTE LOCALIZADO" if possui_valor_estruturado else "INCOMPLETO"
+    elif valor_nao_aplicavel_estrutural(valor_extraido):
+        status = "LOCALIZADO — NÃO APLICÁVEL"
+    else:
+        status = "CONFORME/LOCALIZADO"
     criticidade = campo["criticidade"] if incompleto else "OK"
     falha = f"Campo {numero} — {nome} está incompleto ou não foi localizado de forma estruturada." if incompleto else ""
 
@@ -2810,6 +3067,9 @@ def corpus_agentes_campo15(texto):
                 partes.append(str(valor))
     if partes:
         return " ".join(partes)
+    legado = corpus_agentes_legado(texto)
+    if legado:
+        return legado
     bloco = bloco_tabela_por_termos(
         texto,
         ["15 - exposição", "15 exposicao", "15 -", "15.1", "exposição a fatores de riscos", "exposicao a fatores de riscos"],
@@ -2853,7 +3113,11 @@ def analisar_agentes(texto):
     Identifica agentes nocivos apenas a partir do Campo 15 estruturado.
     Evita falso positivo por palavras soltas em outros trechos do documento.
     """
+    if ppp_sem_agentes_declarados(texto):
+        return []
     corpus_15 = corpus_agentes_campo15(texto)
+    if "ausencia de riscos" in normalizar(corpus_15) and not re.search(r"ru[ií]do|vibra|hidrocarbon|fumos|poeira|silica|agro|virus|bacter|fung|hiv|hepatite", corpus_15, flags=re.IGNORECASE):
+        return []
     texto_norm = normalizar(corpus_15)
     agentes = []
 
