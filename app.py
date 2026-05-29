@@ -1935,6 +1935,10 @@ def agrupar_linhas_por_inicio_estrutural(linhas, tipo):
         limpa = re.sub(r"\s+", " ", str(linha or "")).strip()
         if not limpa:
             continue
+        if tipo == "15" and re.fullmatch(r"\(?\d{2}/\d{2}/\d{4}\s*a?\)?", limpa, flags=re.IGNORECASE):
+            if atual:
+                atual = f"{atual} {limpa}".strip()
+            continue
         if linha_ruido_ocr_isolada(limpa):
             if tipo == "15":
                 if atual and len(re.sub(r"\D", "", limpa)) >= 5:
@@ -2865,12 +2869,42 @@ def extrair_linhas_15_ocr(texto):
     for linha in bloco:
         limpa = re.sub(r"\s+", " ", linha).strip()
         linha_parse = re.sub(r"\s*\|\s*", " ", limpa)
+        linha_parse = re.sub(
+            r"((?:0[1-9]|[12]\d|3[01])/(?:0[1-9]|1[0-2])/\d{4})\s+a[\|\]lI]?\s+",
+            r"\1 a ",
+            linha_parse,
+            flags=re.IGNORECASE,
+        )
         m = re.search(rf"(?P<periodo>{padrao_periodo})\s+(?P<tipo>{tipo_re})\s+(?P<resto>.+)", linha_parse, flags=re.IGNORECASE)
         periodo_aberto = False
         if not m:
             m = re.search(rf"(?P<periodo>(?:0[1-9]|[12]\d|3[01])/(?:0[1-9]|1[0-2])/\d{{4}}|(?:0[1-9]|1[0-2])/\d{{4}})\s+a\s+(?P<tipo>{tipo_re})\s+(?P<resto>.+)", linha_parse, flags=re.IGNORECASE)
             periodo_aberto = bool(m)
         if not m:
+            m_sem_tipo = re.search(
+                rf"(?P<periodo>(?:0[1-9]|[12]\d|3[01])/(?:0[1-9]|1[0-2])/\d{{4}}|(?:0[1-9]|1[0-2])/\d{{4}})\s+a\s+(?P<resto>.+)",
+                linha_parse,
+                flags=re.IGNORECASE,
+            )
+            if m_sem_tipo:
+                resto_sem_tipo = m_sem_tipo.group("resto").strip()
+                agentes_sem_tipo = extrair_agentes_detectados_campo15(resto_sem_tipo)
+                fator_sem_tipo = inferir_fator_risco_15(resto_sem_tipo)
+                tipo_sem_tipo = inferir_tipo_agente_15(resto_sem_tipo)
+                if agentes_sem_tipo or fator_sem_tipo or tipo_sem_tipo:
+                    idx = len(linhas) + 1
+                    dados = {
+                        "15.1": m_sem_tipo.group("periodo").strip() + " a atual",
+                        "15.2": tipo_sem_tipo or inferir_tipo_agente_15(fator_sem_tipo) or "não localizado",
+                        "15.3": fator_sem_tipo or (agentes_sem_tipo[0] if agentes_sem_tipo else ""),
+                        "_linha_original": limpa,
+                    }
+                    partes_sem_tipo = [p.strip() for p in re.split(r"\s{2,}| (?=NA\b|N[aã\?]o\b|Sim\b|Qualitativ|Quantitativ|ND\b|\d{2,3}[,.]\d|ppm\b|mg/m|NHO|NR[-\s]*15)", resto_sem_tipo) if p.strip()]
+                    preencher_por_ordem(dados, ["15.3", "15.4", "15.5", "15.6", "15.7", "15.8"], partes_sem_tipo)
+                    normalizar_linha_15(dados)
+                    linhas[idx] = dados
+                    ultimo_idx = idx
+                    continue
             if ultimo_idx and re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB|Medi[cç\?].{0,4}o\s+de\s+NPS|Decibel|NHO[-\s]*01|NR[-\s]*15|ppm|mg/m", limpa, flags=re.IGNORECASE):
                 base = linhas.get(ultimo_idx, {})
                 intensidade = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?(?:\s*\(\d{2}/\d{2}/\d{4}\))?|\b\d+(?:[,.]\d+)?\s*(?:ppm|mg/m[³3])\b", limpa, flags=re.IGNORECASE)
