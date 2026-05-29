@@ -952,6 +952,7 @@ def extrair_texto_pdf(uploaded_file):
                 except Exception:
                     texto += "\n" + pytesseract.image_to_string(img, lang="por+eng", config=config)
             texto += "\n" + ocr_regioes_tabeladas_ppp(imagens)
+            texto += "\n" + ocr_soc_celulas_ppp(imagens)
         except Exception as e:
             texto += f"\n[OCR não executado ou falhou: {e}]\n"
 
@@ -981,6 +982,118 @@ def ocr_regioes_tabeladas_ppp(imagens):
                     textos.append(f"\n=== OCR REGIÃO TABELADA {nome} PÁGINA {pagina} ===\n{trecho}")
             except Exception:
                 continue
+    return "\n".join(textos)
+
+
+def ocr_celula(crop, psm=6):
+    if pytesseract is None:
+        return ""
+    try:
+        from PIL import ImageOps, ImageFilter
+        img = crop.convert("L")
+        img = ImageOps.autocontrast(img)
+        img = img.resize((img.width * 2, img.height * 2))
+        img = img.filter(ImageFilter.SHARPEN)
+    except Exception:
+        img = crop
+    config = f"--psm {psm} -c preserve_interword_spaces=1"
+    try:
+        texto = pytesseract.image_to_string(img, lang="por", config=config)
+    except Exception:
+        try:
+            texto = pytesseract.image_to_string(img, lang="por+eng", config=config)
+        except Exception:
+            texto = ""
+    return re.sub(r"\s+", " ", texto or "").strip(" -:|")
+
+
+def crop_relativo(img, box):
+    w, h = img.size
+    x1, y1, x2, y2 = box
+    return img.crop((int(w * x1), int(h * y1), int(w * x2), int(h * y2)))
+
+
+def ocr_soc_celulas_ppp(imagens):
+    """
+    Fallback específico para PPP SOC escaneado.
+    Recorta células por posição relativa da página e emite linhas no formato
+    manual estruturado que o parser já reanalisa.
+    """
+    if pytesseract is None or not imagens:
+        return ""
+    textos = ["\n=== OCR SOC POR CÉLULAS ==="]
+    img = imagens[0]
+
+    celulas_13_14 = [
+        ("13.1", "Período", 1, (0.065, 0.300, 0.245, 0.365), 6),
+        ("13.2", "CNPJ", 1, (0.405, 0.278, 0.915, 0.307), 6),
+        ("13.3", "Setor", 1, (0.405, 0.307, 0.915, 0.324), 7),
+        ("13.4", "Cargo", 1, (0.405, 0.324, 0.915, 0.340), 7),
+        ("13.5", "Função", 1, (0.405, 0.340, 0.915, 0.356), 7),
+        ("13.6", "CBO", 1, (0.405, 0.356, 0.915, 0.372), 7),
+        ("13.7", "Código GFIP/eSocial", 1, (0.405, 0.372, 0.915, 0.389), 7),
+        ("14.1", "Período", 1, (0.070, 0.386, 0.250, 0.405), 7),
+        ("14.2", "Descrição das atividades", 1, (0.250, 0.386, 0.915, 0.405), 6),
+    ]
+    for numero, nome, linha, box, psm in celulas_13_14:
+        valor = ocr_celula(crop_relativo(img, box), psm=psm)
+        if valor:
+            textos.append(f"{numero} - {nome} | linha {linha}: {valor}")
+
+    colunas_15 = [
+        ("15.1", "Período", (0.070, 0.000, 0.155, 0.000), 7),
+        ("15.2", "Tipo", (0.155, 0.000, 0.215, 0.000), 7),
+        ("15.3", "Fator de risco", (0.215, 0.000, 0.325, 0.000), 6),
+        ("15.4", "Intensidade / concentração", (0.325, 0.000, 0.470, 0.000), 6),
+        ("15.5", "Técnica utilizada", (0.470, 0.000, 0.595, 0.000), 6),
+        ("15.6", "EPC eficaz", (0.595, 0.000, 0.668, 0.000), 7),
+        ("15.7", "EPI eficaz", (0.668, 0.000, 0.825, 0.000), 7),
+        ("15.8", "CA do EPI", (0.825, 0.000, 0.920, 0.000), 7),
+    ]
+    linhas_15 = [
+        (1, 0.458, 0.495),
+        (2, 0.495, 0.548),
+        (3, 0.548, 0.603),
+        (4, 0.603, 0.642),
+        (5, 0.642, 0.681),
+        (6, 0.681, 0.720),
+        (7, 0.720, 0.750),
+        (8, 0.750, 0.779),
+        (9, 0.779, 0.811),
+    ]
+    for linha, y1, y2 in linhas_15:
+        valores_linha = []
+        for numero, nome, (x1, _, x2, _), psm in colunas_15:
+            valor = ocr_celula(crop_relativo(img, (x1, y1, x2, y2)), psm=psm)
+            if valor:
+                textos.append(f"{numero} - {nome} | linha {linha}: {valor}")
+                valores_linha.append(valor)
+        if valores_linha:
+            textos.append(f"15 - Linha ambiental OCR SOC | linha {linha}: " + " | ".join(valores_linha))
+
+    celulas_159 = [
+        ("15.9 [01]", "Medidas coletivas/administrativas antes do EPI", 1, (0.835, 0.812, 0.920, 0.832), 7),
+        ("15.9 [02]", "Funcionamento e uso ininterrupto do EPI", 1, (0.835, 0.832, 0.920, 0.853), 7),
+        ("15.9 [03]", "Prazo de validade/CA", 1, (0.835, 0.853, 0.920, 0.872), 7),
+        ("15.9 [04]", "Periodicidade de troca", 1, (0.835, 0.872, 0.920, 0.891), 7),
+        ("15.9 [05]", "Higienização", 1, (0.835, 0.891, 0.920, 0.910), 7),
+    ]
+    for numero, nome, linha, box, psm in celulas_159:
+        valor = ocr_celula(crop_relativo(img, box), psm=psm)
+        if valor:
+            textos.append(f"{numero} - {nome} | linha {linha}: {valor}")
+
+    celulas_16 = [
+        ("16.1", "Período responsável técnico", 1, (0.070, 0.884, 0.230, 0.904), 7),
+        ("16.2", "NIT/CPF do responsável", 1, (0.230, 0.884, 0.485, 0.904), 7),
+        ("16.3", "Registro conselho de classe", 1, (0.485, 0.884, 0.685, 0.904), 7),
+        ("16.4", "Nome do profissional legalmente habilitado", 1, (0.685, 0.884, 0.920, 0.904), 6),
+    ]
+    for numero, nome, linha, box, psm in celulas_16:
+        valor = ocr_celula(crop_relativo(img, box), psm=psm)
+        if valor:
+            textos.append(f"{numero} - {nome} | linha {linha}: {valor}")
+
     return "\n".join(textos)
 
 
@@ -2837,6 +2950,10 @@ def extrair_linhas_14_ocr(texto):
     pendente = None
     for linha in bloco:
         limpa = re.sub(r"\s+", " ", linha).strip()
+        if not limpa or re.match(r"^(?:13|15|16|17|18|19|20)(?:\.\d+)?\s*[-:|]", limpa, flags=re.IGNORECASE):
+            continue
+        if re.search(r"\b(?:registros ambientais|respons[aá]vel|representante legal|data de emiss[aã]o|exposi[cç][aã]o a fatores)\b", limpa, flags=re.IGNORECASE):
+            continue
         m, periodo_valor = periodo_ppp_linha(limpa)
         if m:
             idx = len(linhas) + 1
@@ -3080,11 +3197,17 @@ def montar_linhas_compostas(texto, campo):
 
     if campo["numero"] == "13":
         for idx, dados in extrair_linhas_13_ocr(texto).items():
-            manuais.setdefault(idx, {}).update({k: v for k, v in dados.items() if v})
+            manuais.setdefault(idx, {})
+            for k, v in dados.items():
+                if v:
+                    manuais[idx].setdefault(k, v)
 
     if campo["numero"] == "14":
         for idx, dados in extrair_linhas_14_ocr(texto).items():
-            manuais.setdefault(idx, {}).update({k: v for k, v in dados.items() if v})
+            manuais.setdefault(idx, {})
+            for k, v in dados.items():
+                if v:
+                    manuais[idx].setdefault(k, v)
 
     if campo["numero"] == "16":
         responsaveis = extrair_responsaveis_ambientais_linhas(texto)
@@ -3097,7 +3220,10 @@ def montar_linhas_compostas(texto, campo):
 
     if campo["numero"] == "15":
         for idx, dados in extrair_linhas_15_ocr(texto).items():
-            manuais.setdefault(idx, {}).update({k: v for k, v in dados.items() if v})
+            manuais.setdefault(idx, {})
+            for k, v in dados.items():
+                if v:
+                    manuais[idx].setdefault(k, v)
         tipos = extrair_tipo_15_2(texto)
         epcs = extrair_epc_15_6(texto)
         sub159 = {s["codigo"]: s.get("resposta", "") for s in extrair_subitens_159(texto)}
