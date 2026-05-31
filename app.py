@@ -1203,6 +1203,22 @@ def texto_ocr_soc_legivel(valor, minimo_palavras=1, minimo_caracteres=3):
     return len(palavras) >= minimo_palavras
 
 
+def nome_responsavel_tecnico_soc_valido(valor):
+    valor = re.sub(r"\s+", " ", str(valor or "")).strip(" -:|")
+    if not texto_ocr_soc_legivel(valor, minimo_palavras=2, minimo_caracteres=8):
+        return False
+    palavras = re.findall(r"[A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]+", valor)
+    conectores = {"de", "da", "do", "das", "dos", "e"}
+    if len(palavras) < 2 or any(len(p) == 1 for p in palavras):
+        return False
+    for palavra in palavras:
+        if palavra.lower() in conectores:
+            continue
+        if not (palavra.isupper() or palavra[0].isupper()):
+            return False
+    return True
+
+
 def normalizar_resposta_ocr_soc(valor):
     valor = re.sub(r"\s+", " ", str(valor or "")).strip(" -:|")
     vn = normalizar(valor)
@@ -1294,8 +1310,7 @@ def validar_valor_ocr_soc(numero, valor):
         m = re.search(r"\b(?:(?:CRM|CREA|CRQ|MTE)\s*[-.]?\s*\d{2,12}(?:[/\-][A-Z]{2})?|\d{3,8}(?:/[A-Z]{2}|\s*[A-Z]-[A-Z]{2}))\b", valor, flags=re.IGNORECASE)
         return re.sub(r"\s+", " ", m.group(0)).strip() if m else ""
     if numero == "16.4":
-        palavras = re.findall(r"[A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]{2,}", valor)
-        return valor if texto_ocr_soc_legivel(valor, minimo_palavras=2, minimo_caracteres=8) and len(palavras) >= 2 else ""
+        return valor if nome_responsavel_tecnico_soc_valido(valor) else ""
     return valor
 
 
@@ -1362,7 +1377,7 @@ def ocr_soc_celulas_ppp(imagens):
     colunas_15 = [
         ("15.1", "Período", (0.070, 0.000, 0.155, 0.000), 7),
         ("15.2", "Tipo", (0.155, 0.000, 0.215, 0.000), 7),
-        ("15.3", "Fator de risco", (0.215, 0.000, 0.325, 0.000), 6),
+        ("15.3", "Fator de risco", (0.205, 0.000, 0.390, 0.000), 6),
         ("15.4", "Intensidade / concentração", (0.325, 0.000, 0.470, 0.000), 6),
         ("15.5", "Técnica utilizada", (0.470, 0.000, 0.595, 0.000), 6),
         ("15.6", "EPC eficaz", (0.595, 0.000, 0.668, 0.000), 7),
@@ -1399,6 +1414,13 @@ def ocr_soc_celulas_ppp(imagens):
                 valores_por_numero[numero] = validado
         if all(valores_por_numero.get(numero) for numero in ["15.1", "15.2", "15.3"]):
             textos.append(f"15 - Linha ambiental OCR SOC | linha {linha}: " + " | ".join(valores_linha))
+
+    coluna_agentes = ocr_celula(crop_relativo(img, (0.195, 0.450, 0.405, 0.744)), psm=6)
+    agentes_complementares = extrair_agentes_detectados_campo15(coluna_agentes)
+    if agentes_complementares:
+        textos.append("\n=== AGENTES CAMPO 15 OCR SOC COMPLEMENTARES ===")
+        for agente in agentes_complementares:
+            textos.append(f"AGENTE CAMPO 15 SOC: {agente}")
 
     celulas_159 = [
         ("15.9 [01]", "Medidas coletivas/administrativas antes do EPI", 1, (0.835, 0.753, 0.920, 0.776), 7),
@@ -2894,6 +2916,12 @@ def extrair_campos_administrativos_ocr(texto):
             digitos = re.sub(r"\D", "", m_documento_flex.group(1))
             if len(digitos) in {10, 11}:
                 dados["6"] = digitos
+    if not dados.get("6"):
+        for m_documento in re.finditer(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b", flat):
+            digitos = re.sub(r"\D", "", m_documento.group(0))
+            if len(digitos) == 11:
+                dados["6"] = m_documento.group(0)
+                break
 
     m_linha_doc = re.search(
         r"(\d{2}/\d{2}/\d{4}|\d{2}/\d{6})\s+"
@@ -3175,6 +3203,9 @@ def normalizar_linha_15(dados):
         dados["_agentes_detectados"] = " | ".join(agentes_detectados)
     if fator:
         dados["15.3"] = fator
+        tipo_fator = inferir_tipo_agente_15(fator)
+        if tipo_fator:
+            dados["15.2"] = tipo_fator
 
     texto_intensidade = " ".join(str(dados.get(k, "")) for k in ["15.3", "15.4", "_linha_original"])
     intensidade_embutida = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?(?:\s*NEN)?|\b\d+(?:[,.]\d+)?\s*(?:ppm|mg/m[³3])\b|\b(?:qualitativ[ao]|quantitativ[ao]|ND)\b", texto_intensidade, flags=re.IGNORECASE)
@@ -3199,6 +3230,13 @@ def normalizar_linha_15(dados):
         m = re.search(r"(?:Medi[cç\?].{0,4}o\s+de\s+NPS\s*-\s*)?(?:Decibel.{0,3}metro|Decibelimetro|Dos.{0,3}metro|NHO[-\s]*01|NHO\s*01|Fundacentro|NR[-\s]*15(?:\s*Anexo\s*\d+)?)", texto_tecnica, flags=re.IGNORECASE)
         if m:
             dados["15.5"] = re.sub(r"\s+", " ", m.group(0)).strip()
+    fator_norm = normalizar(str(dados.get("15.3", "")))
+    tipo_norm = normalizar(str(dados.get("15.2", "")))
+    if "ruido" not in fator_norm and tipo_norm != "fisico":
+        if re.search(r"\bdB\b", str(dados.get("15.4", "")), flags=re.IGNORECASE):
+            dados["15.4"] = ""
+        if re.search(r"(?:Decibel|NHO[-\s]*01|Medi[cç\?].{0,4}o\s+de\s+NPS)", str(dados.get("15.5", "")), flags=re.IGNORECASE):
+            dados["15.5"] = ""
     respostas = re.findall(r"\b(N[aã\?]o\s+se\s+aplica|N[aã\?]o|Sim|S|N|NA|Eficaz|N[aã\?]o\s+eficaz)\b", linha_original, flags=re.IGNORECASE)
     respostas = [normalizar_resposta_sn(r) for r in respostas]
     valor_15_6 = normalizar(str(dados.get("15.6", "")))
@@ -3944,7 +3982,10 @@ def montar_linhas_compostas(texto, campo):
             if not valor and numero == "15.9":
                 valor = "ver subitens" if any(dados.get(n) for n, _ in subcampos if n.startswith("15.9 [")) else ""
             subdados[numero] = {"nome": nome, "valor": valor}
-            if valor_ausente_estrutural(valor):
+            campo_159_global = campo["numero"] == "15" and idx > 1 and (
+                numero == "15.9" or numero.startswith("15.9 [")
+            )
+            if valor_ausente_estrutural(valor) and not campo_159_global:
                 incompletos.append(numero)
         valores_linha = [d.get("valor", "") for d in subdados.values() if d.get("valor")]
         status_linha = "INCOMPLETO" if incompletos else "CONFORME/LOCALIZADO"
@@ -4079,6 +4120,7 @@ def corpus_agentes_campo15(texto):
         ["15.9", "16 - respons", "16.1", "responsável pelos registros", "responsavel pelos registros"],
     )
     texto_bloco = " ".join(re.sub(r"\s+", " ", l).strip() for l in bloco)
+    partes.extend(re.findall(r"(?im)^\s*AGENTE\s+CAMPO\s+15\s+SOC\s*:\s*(.+?)\s*$", texto or ""))
     if not ppp_sem_agentes_declarados(texto_bloco):
         # Mesmo quando uma linha já foi estruturada, o OCR pode ter omitido a
         # repetição de período/tipo nas linhas seguintes. Reaproveita somente
@@ -4717,7 +4759,7 @@ def deve_gerar_placeholder_subcampo(texto, campo, linha, numero, dados):
     if valor_manual_campo_linha(texto, numero, indice_linha):
         return False
 
-    if numero.startswith("15.9 [") and indice_linha not in {None, 1}:
+    if (numero == "15.9" or numero.startswith("15.9 [")) and indice_linha not in {None, 1}:
         return False
 
     admin = extrair_campos_administrativos_ocr(texto)
