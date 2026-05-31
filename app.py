@@ -908,7 +908,11 @@ def normalizar(texto):
 
 
 def extrair_texto_pdf(uploaded_file):
-    pdf_bytes = uploaded_file.read()
+    return extrair_texto_pdf_bytes(uploaded_file.read())
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 24)
+def extrair_texto_pdf_bytes(pdf_bytes):
     partes = []
 
     if pdfplumber is not None:
@@ -944,16 +948,23 @@ def extrair_texto_pdf(uploaded_file):
     precisa_ocr = len(re.sub(r"\s+", "", texto)) < 300 or not any(t in normalizar(texto) for t in ["lotacao", "registros ambientais", "responsavel pelos registros"])
     if precisa_ocr and pytesseract is not None and convert_from_bytes is not None:
         try:
-            imagens = convert_from_bytes(pdf_bytes, dpi=300)
+            imagens = convert_from_bytes(pdf_bytes, dpi=250)
             for img in imagens:
                 config = "--psm 6 -c preserve_interword_spaces=1"
                 try:
                     texto += "\n" + pytesseract.image_to_string(img, lang="por", config=config)
                 except Exception:
                     texto += "\n" + pytesseract.image_to_string(img, lang="por+eng", config=config)
-            texto += "\n" + ocr_regioes_tabeladas_ppp(imagens)
-            texto += "\n" + ocr_tabelas_grade_ppp(imagens)
-            texto += "\n" + ocr_soc_celulas_ppp(imagens)
+            imagens_soc = [img for img in imagens if layout_soc_ppp8_compativel(img)]
+            if imagens_soc:
+                # O template SOC já possui recortes calibrados. Executar também
+                # as regiões amplas e a grade genérica multiplica chamadas ao
+                # Tesseract sem ganho proporcional e pode estourar recursos no
+                # Streamlit Cloud.
+                texto += "\n" + ocr_soc_celulas_ppp(imagens_soc)
+            else:
+                texto += "\n" + ocr_regioes_tabeladas_ppp(imagens)
+                texto += "\n" + ocr_tabelas_grade_ppp(imagens)
         except Exception as e:
             texto += f"\n[OCR não executado ou falhou: {e}]\n"
 
@@ -1152,13 +1163,14 @@ def ocr_celula(crop, psm=6):
     return re.sub(r"\s+", " ", texto or "").strip(" -:|")
 
 
-def ocr_celula_soc_validada(crop, numero, psm=6):
+def ocr_celula_soc_validada(crop, numero, psm=6, tentar_alternativo=True):
     """
     Faz OCR da célula e tenta uma segunda segmentação quando a primeira leitura
     não atende ao formato esperado para o subcampo.
     """
     tentativas = [psm]
-    for alternativo in [7, 6, 11, 13]:
+    if tentar_alternativo:
+        alternativo = 6 if psm == 7 else 7
         if alternativo not in tentativas:
             tentativas.append(alternativo)
     primeiro_bruto = ""
@@ -1279,7 +1291,7 @@ def validar_valor_ocr_soc(numero, valor):
         m = re.search(r"\b\d{3}\.?\d{3,5}\.?\d{2,3}-?\d{1,2}\b", valor)
         return m.group(0) if m and 10 <= len(re.sub(r"\D", "", m.group(0))) <= 11 else ""
     if numero == "16.3":
-        m = re.search(r"\b(?:(?:CRM|CREA|CRQ|MTE)\s*[-.]?\s*\d{2,12}(?:/[A-Z]{2})?|\d{3,8}(?:/[A-Z]{2}|\s*[A-Z]-[A-Z]{2}))\b", valor, flags=re.IGNORECASE)
+        m = re.search(r"\b(?:(?:CRM|CREA|CRQ|MTE)\s*[-.]?\s*\d{2,12}(?:[/\-][A-Z]{2})?|\d{3,8}(?:/[A-Z]{2}|\s*[A-Z]-[A-Z]{2}))\b", valor, flags=re.IGNORECASE)
         return re.sub(r"\s+", " ", m.group(0)).strip() if m else ""
     if numero == "16.4":
         palavras = re.findall(r"[A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]{2,}", valor)
@@ -1296,8 +1308,8 @@ def adicionar_ocr_soc_validado(textos, rejeitados, numero, nome, linha, valor):
     return validado
 
 
-def adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop, psm=6):
-    validado, bruto = ocr_celula_soc_validada(crop, numero, psm=psm)
+def adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop, psm=6, tentar_alternativo=True):
+    validado, bruto = ocr_celula_soc_validada(crop, numero, psm=psm, tentar_alternativo=tentar_alternativo)
     if validado:
         textos.append(f"{numero} - {nome} | linha {linha}: {validado}")
     elif bruto:
@@ -1372,7 +1384,16 @@ def ocr_soc_celulas_ppp(imagens):
         valores_linha = []
         valores_por_numero = {}
         for numero, nome, (x1, _, x2, _), psm in colunas_15:
-            validado = adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop_relativo(img, (x1, y1, x2, y2)), psm=psm)
+            validado = adicionar_crop_ocr_soc(
+                textos,
+                rejeitados,
+                numero,
+                nome,
+                linha,
+                crop_relativo(img, (x1, y1, x2, y2)),
+                psm=psm,
+                tentar_alternativo=numero in {"15.1", "15.2", "15.3"},
+            )
             if validado:
                 valores_linha.append(validado)
                 valores_por_numero[numero] = validado
@@ -1399,8 +1420,7 @@ def ocr_soc_celulas_ppp(imagens):
         adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop_relativo(img, box), psm=psm)
 
     if rejeitados:
-        textos.append("\n=== LEITURAS OCR SOC REJEITADAS ===")
-        textos.extend(rejeitados)
+        textos.append(f"\n=== LEITURAS OCR SOC REJEITADAS: {len(rejeitados)} ===")
     return "\n".join(textos)
 
 
@@ -1508,7 +1528,7 @@ def limpar_valor_campo_escalar(numero, valor):
             valor = ""
     elif numero == "9":
         m = re.search(r"\b\d{3,}/\d{2,}(?:\s*[-/]\s*[A-Z]{2})?\b", valor, flags=re.IGNORECASE)
-        valor = re.sub(r"/([A-Z]{2})$", r" - \1", m.group(0).strip()) if m else valor
+        valor = re.sub(r"/([A-Z]{2})$", r" - \1", m.group(0).strip()) if m else ""
     elif numero == "10":
         m = re.search(r"\b\d{2}/\d{2}/\d{4}\b|\b\d{2}/\d{6}\b", valor)
         valor = normalizar_data_ocr(m.group(0)) if m else valor
@@ -1908,6 +1928,7 @@ def extrair_campo9_ctps_ou_esocial(texto):
 # ANÁLISE DE CAMPOS COMPOSTOS: 15.9 E 16
 # ============================================================
 
+@st.cache_data(show_spinner=False)
 def extrair_subitens_159(texto):
     """
     Extrai e analisa os subitens do campo 15.9:
@@ -1999,6 +2020,7 @@ def extrair_subitens_159(texto):
     return resultados
 
 
+@st.cache_data(show_spinner=False)
 def extrair_responsaveis_ambientais_linhas(texto):
     """
     Tenta estruturar as linhas do Campo 16:
@@ -2011,14 +2033,19 @@ def extrair_responsaveis_ambientais_linhas(texto):
     bloco_16 = bloco_tabela_por_termos(
         texto,
         ["16 - respons", "16.1", "responsável pelos registros ambientais", "responsavel pelos registros ambientais"],
-        ["17 -", "19 data", "20 representante", "responsáveis pelas informações", "responsaveis pelas informacoes", "18 -", "18.1"],
+        [
+            "17 -", "18 -", "18.1", "19 data", "20 representante",
+            "responsáveis pelas informações", "responsaveis pelas informacoes",
+            "declaramos", "data da emissão", "data da emissao",
+            "representante legal", "=== ocr",
+        ],
     ) if "bloco_tabela_por_termos" in globals() else []
     texto_base = "\n".join(bloco_16) if bloco_16 else texto
     linhas_brutas = [re.sub(r"\s+", " ", l).strip() for l in texto_base.splitlines() if l.strip()]
     linhas = agrupar_linhas_campo16(linhas_brutas)
     responsaveis = []
 
-    registro_conselho = r"(?:(?:CRM|CREA|CRQ|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:/[A-Z]{2})?|\d{3,8}(?:\s*[A-Z]-[A-Z]{2}|/[A-Z]{2}))"
+    registro_conselho = r"(?:(?:CRM|CREA|CRQ|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:[/\-][A-Z]{2})?|\d{3,8}(?:\s*[A-Z]-[A-Z]{2}|/[A-Z]{2}))"
 
     # Padrão principal: período, opcional CPF/NIT, registro profissional, nome
     padroes = [
@@ -2297,7 +2324,7 @@ def limpar_nome_representante(nome):
 def limpar_nome_responsavel_tecnico(nome):
     nome = re.sub(r"\s+", " ", str(nome or "")).strip(" -:|")
     nome = re.split(
-        r"\b(?:DOOM|SE.{0,3}O|RESULTADOS|MONITORA.{0,3}O|BIOL[OÓ\?]GICA|RESPONS[AÁ\?]VEL\s+PELA|18\s*[-.:])\b",
+        r"\b(?:DOOM|SE.{0,3}O|RESULTADOS|MONITORA.{0,3}O|BIOL[OÓ\?]GICA|RESPONS[AÁ\?]VEIS?|RESPONS[AÁ\?]VEL\s+PELA|18\s*[-.:])\b",
         nome,
         maxsplit=1,
         flags=re.IGNORECASE,
@@ -2439,6 +2466,14 @@ def normalizar_resposta_sn(valor):
 
 def ppp_sem_agentes_declarados(texto):
     tn = normalizar(texto or "")
+    if re.search(
+        r"\bausencia\s+de\s+riscos?\s*[,;:\-]?\s*fisicos?"
+        r"(?:\s*[,;/]\s*|\s+e\s+)quimicos?"
+        r"(?:\s*[,;/]\s*(?:e\s+)?|\s+e\s+)biologicos?\b",
+        tn,
+        flags=re.IGNORECASE,
+    ):
+        return True
     padroes = [
         "ausencia de riscos fisico, quimico e biologico",
         "ausencia de risco fisico, quimico e biologico",
@@ -2487,7 +2522,7 @@ def inferir_tipo_agente_15(texto):
         "quimico", "hidrocarbon", "oleo", "oleos", "graxa", "lubrificante",
         "fumos", "poeira", "silica", "agrotoxico", "pesticida", "domissanitario",
         "tensoativo", "hexano", "heptano", "acetona", "acetato", "tolueno",
-        "solvente", "dioxido de titanio", "silicato"
+        "solvente", "dioxido de titanio", "silicato", "chumbo", "ferro", "manganes"
     ]):
         return "Químico"
     if re.fullmatch(r"b", t) or any(p in t for p in [
@@ -2521,6 +2556,9 @@ def inferir_fator_risco_15(texto):
         (["oleo mineral", "oleos minerais"], "Óleos minerais"),
         (["graxa", "lubrificante"], "Graxas/lubrificantes"),
         (["fumos metalicos", "fumo metalico"], "Fumos metálicos"),
+        (["chumbo"], "Chumbo"),
+        (["manganes"], "Manganês"),
+        (["ferro"], "Ferro"),
         (["poeira respiravel"], "Poeira respirável"),
         (["poeiras minerais", "poeira mineral"], "Poeiras minerais"),
         (["silica"], "Sílica"),
@@ -2565,9 +2603,12 @@ def extrair_agentes_detectados_campo15(texto):
         ("Calor", ["calor", "ibutg"]),
         ("Umidade", ["umidade"]),
         ("Fumos metálicos (ferro)", ["fumos metalicos ferro", "fumo metalico ferro", "ferro)"]),
-        ("Fumos metálicos (manganês)", ["fumos metalicos manganes", "fumo metalico manganes", "manganes", "manganês"]),
-        ("Fumos metálicos (silício)", ["fumos metalicos silicio", "fumo metalico silicio", "silicio", "silício"]),
+        ("Fumos metálicos (manganês)", ["fumos metalicos manganes", "fumo metalico manganes", "manganes)"]),
+        ("Fumos metálicos (silício)", ["fumos metalicos silicio", "fumo metalico silicio", "silicio)"]),
         ("Fumos metálicos", ["fumos metalicos", "fumos metálicos", "fumo metalico", "fumo metálico", "solda", "soldagem"]),
+        ("Chumbo", ["chumbo"]),
+        ("Manganês", ["manganes", "manganês"]),
+        ("Ferro", ["ferro"]),
         ("Poeira respirável", ["poeira respiravel", "poeira respirável"]),
         ("Poeira total", ["poeira total"]),
         ("Poeiras minerais", ["poeiras minerais", "poeira mineral"]),
@@ -2602,6 +2643,10 @@ def extrair_agentes_detectados_campo15(texto):
                 agentes.append(rotulo)
     if "Fumos metálicos" in agentes and any(a.startswith("Fumos metálicos (") for a in agentes):
         agentes.remove("Fumos metálicos")
+    if "Fumos metálicos (ferro)" in agentes and "Ferro" in agentes:
+        agentes.remove("Ferro")
+    if "Fumos metálicos (manganês)" in agentes and "Manganês" in agentes:
+        agentes.remove("Manganês")
     return agentes
 
 
@@ -2619,7 +2664,7 @@ def chave_agente_para_rotulo(rotulo):
         return "calor"
     if "umidade" in r:
         return "umidade"
-    if "fumos metalicos" in r:
+    if "fumos metalicos" in r or r in {"chumbo", "ferro", "manganes"}:
         return "fumos_metalicos"
     if "poeira" in r or "silica" in r:
         return "poeiras"
@@ -2752,6 +2797,7 @@ def bloco_dados_administrativos(texto):
     return texto[inicio:fim]
 
 
+@st.cache_data(show_spinner=False)
 def extrair_campos_administrativos_ocr(texto):
     """
     Lê os campos 1 a 11 quando o OCR devolve a tabela por faixas, não por rótulo.
@@ -2893,8 +2939,57 @@ def extrair_campos_administrativos_ocr(texto):
                 dados.setdefault("11", m_doc_valores.group(3).upper().replace("N/A", "NA"))
                 break
 
+    # Layouts antigos e rurais podem deslocar os valores administrativos para
+    # linhas distintas. Busca limitada ao bloco administrativo evita capturar
+    # datas e códigos das tabelas ambientais.
+    if not dados.get("7"):
+        m_nascimento = re.search(r"(?:Data\s+do\s+)?Nascimento.{0,100}?(\d{2}/\d{2}/\d{4})", bloco, flags=re.IGNORECASE | re.DOTALL)
+        if m_nascimento:
+            dados["7"] = m_nascimento.group(1)
+    if not dados.get("8"):
+        m_sexo = re.search(r"\b(Masculino|Feminino)\b", bloco, flags=re.IGNORECASE)
+        if m_sexo:
+            dados["8"] = m_sexo.group(1)
+    if not dados.get("9"):
+        m_ctps = re.search(
+            r"(?:CTPS|Matr[ií]cula(?:\s+do\s+Trabalhador)?(?:\s+no)?\s*eSocial).{0,120}?"
+            r"([A-Z0-9]{1,20}(?:[/,.-][A-Z0-9]{1,20})+(?:\s*-\s*[A-Z]{2})?|[A-Z][A-Z0-9]{4,30}|\d{1,12})",
+            bloco,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if m_ctps:
+            dados["9"] = m_ctps.group(1)
+    if not dados.get("10"):
+        admissao = extrair_data_admissao(bloco)
+        if admissao:
+            dados["10"] = admissao
+    if not dados.get("11"):
+        m_regime = re.search(
+            r"Regime\s+(?:de\s+)?Revezamento.{0,80}?\b(NA|N/?A|N[aã]o\s+aplic[aá]vel|Sim|N[aã]o)\b",
+            bloco,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if m_regime:
+            dados["11"] = m_regime.group(1)
+    datas_admin = re.findall(r"\b\d{2}/\d{2}/\d{4}\b", bloco)
+    if not dados.get("7") and datas_admin:
+        dados["7"] = datas_admin[0]
+    if not dados.get("10") and len(datas_admin) >= 2:
+        dados["10"] = datas_admin[1]
+    if not dados.get("8"):
+        trecho_ate_14 = re.split(r"\b14\s*[-–]", texto or "", maxsplit=1)[0]
+        m_sexo_fora_ordem = re.search(r"\b(Masculino|Feminino)\b", trecho_ate_14, flags=re.IGNORECASE)
+        if m_sexo_fora_ordem:
+            dados["8"] = m_sexo_fora_ordem.group(1)
+
     for chave in list(dados):
         dados[chave] = limpar_valor_campo_escalar(chave, dados[chave])
+    if not dados.get("9"):
+        for m_ctps_numerica in re.finditer(r"\b\d{3,}\s*/\s*\d{2,}(?:\s*-\s*[A-Z]{2})?\b", bloco, flags=re.IGNORECASE):
+            if m_ctps_numerica.start() > 0 and bloco[m_ctps_numerica.start() - 1] in ".0123456789":
+                continue
+            dados["9"] = re.sub(r"\s+", " ", m_ctps_numerica.group(0)).strip()
+            break
 
     return dados
 
@@ -2919,6 +3014,21 @@ def extrair_valor_escalar_estruturado(texto, campo):
     if numero == "10":
         valor = extrair_data_admissao(texto) or valor_manual_campo(texto, numero)
         return limpar_valor_campo_escalar(numero, valor)
+    if numero == "12":
+        manual = valor_manual_campo(texto, numero)
+        if manual:
+            return limpar_valor_campo_escalar(numero, manual)
+        bloco_cat = bloco_tabela_por_termos(
+            texto,
+            ["12 - cat registrada", "12 cat registrada", "cat registrada"],
+            ["13 - lotação", "13 lotação", "13 -", "lotação e atribuição", "lotacao e atribuicao"],
+        )
+        texto_cat = "\n".join(bloco_cat)
+        if texto_cat:
+            datas_cat = re.findall(r"\b\d{2}/\d{2}/\d{4}\b", texto_cat)
+            numeros_cat = re.findall(r"\b\d{4,20}\b", re.sub(r"\b12(?:\.[12])?\b", " ", texto_cat))
+            if not datas_cat and not numeros_cat:
+                return "NA"
     if numero in ["7", "17"]:
         manual = valor_manual_campo(texto, numero)
         if manual:
@@ -3112,6 +3222,92 @@ def normalizar_linha_15(dados):
     return dados
 
 
+def indice_original_por_texto_normalizado(texto, termo):
+    """
+    Localiza um termo normalizado sem perder o índice no texto original.
+    Necessário para recortar contexto correto quando há acentos.
+    """
+    normalizado = []
+    indices = []
+    for indice, caractere in enumerate(str(texto or "")):
+        base = unicodedata.normalize("NFD", caractere.lower())
+        for item in base:
+            if unicodedata.category(item) != "Mn":
+                normalizado.append(item)
+                indices.append(indice)
+    pos = "".join(normalizado).find(normalizar(termo))
+    return indices[pos] if pos != -1 and pos < len(indices) else -1
+
+
+def suplementar_linhas_15_por_agentes(bloco, linhas):
+    """
+    Garante uma linha lógica para cada agente escrito no Campo 15. Em muitos
+    PPPs o período e o tipo aparecem apenas na primeira linha visual.
+    """
+    texto_bloco = "\n".join(bloco or [])
+    agentes = extrair_agentes_detectados_campo15(texto_bloco)
+    if not agentes:
+        return linhas
+    periodos = re.findall(periodo_ppp_regex(), texto_bloco, flags=re.IGNORECASE)
+    periodo_herdado = periodos[0] if periodos else ""
+    existentes = " ".join(
+        " ".join(str(dados.get(chave) or "") for chave in ["15.3", "_agentes_detectados"])
+        for dados in linhas.values()
+    )
+    existentes_detectados = {
+        normalizar(agente) for agente in extrair_agentes_detectados_campo15(existentes)
+    }
+    posicoes_agentes = []
+    for agente in agentes:
+        pos = indice_original_por_texto_normalizado(texto_bloco, agente)
+        if pos != -1:
+            posicoes_agentes.append((pos, agente))
+    posicoes_agentes.sort()
+    proxima_posicao = {}
+    for indice, (pos, agente) in enumerate(posicoes_agentes):
+        proxima_posicao[agente] = posicoes_agentes[indice + 1][0] if indice + 1 < len(posicoes_agentes) else None
+
+    for agente in agentes:
+        if normalizar(agente) in existentes_detectados:
+            continue
+        pos = indice_original_por_texto_normalizado(texto_bloco, agente)
+        limite = proxima_posicao.get(agente)
+        fim = min(pos + 240, limite) if pos != -1 and limite is not None else pos + 240
+        contexto = texto_bloco[pos:fim] if pos != -1 else agente
+        dados = {
+            "15.1": periodo_herdado,
+            "15.2": inferir_tipo_agente_15(agente),
+            "15.3": agente,
+            "_agentes_detectados": agente,
+            "_linha_original": re.sub(r"\s+", " ", contexto).strip(),
+            "_linha_suplementar": True,
+        }
+        intensidade = re.search(
+            r"\b\d+(?:[,.]\d+)?\s*(?:dB\s*\(?A?\)?(?:\s*NEN)?|ppm|mg/m[³3])\b|"
+            r"\b(?:qualitativ[ao]|quantitativ[ao]|ND)\b",
+            contexto,
+            flags=re.IGNORECASE,
+        )
+        if intensidade:
+            dados["15.4"] = intensidade.group(0)
+        tecnica = re.search(
+            r"(?:NHO[-\s]*01|NR[-\s]*15(?:\s*,?\s*anexo\s*\d+)?|Decibel.{0,3}metro|"
+            r"Dos.{0,3}metria|Medi[cç][aã]o\s+de\s+NPS|NIOSH[-\s]*\d+|Inspe[cç][aã]o)",
+            contexto,
+            flags=re.IGNORECASE,
+        )
+        if tecnica:
+            dados["15.5"] = re.sub(r"\s+", " ", tecnica.group(0)).strip()
+        respostas = re.findall(r"\b(NA|N/?A|N[aã]o|Sim|S|N)\b", contexto, flags=re.IGNORECASE)
+        if respostas:
+            dados["15.6"] = normalizar_resposta_sn(respostas[0])
+        if len(respostas) >= 2:
+            dados["15.7"] = normalizar_resposta_sn(respostas[1])
+        normalizar_linha_15(dados)
+        linhas[len(linhas) + 1] = dados
+    return linhas
+
+
 def texto_linha_sem_periodo(linha, periodo):
     texto = linha or ""
     if periodo:
@@ -3176,12 +3372,14 @@ def extrair_subcampos_13_rotulados(bloco):
     return encontrados
 
 
+@st.cache_data(show_spinner=False)
 def extrair_linhas_13_ocr(texto):
-    bloco = bloco_tabela_por_termos(
+    bloco_original = bloco_tabela_por_termos(
         texto,
         ["13 - lotação", "13 lotação", "13 -", "13.1", "lotação e atribuição", "lotacao e atribuicao"],
         ["14 - profissiografia", "14 profissiografia", "14 -", "14.1", "profissiografia", "15 - exposição", "15 exposicao", "15 -", "fatores de riscos"],
     )
+    bloco = list(bloco_original)
     bloco = agrupar_linhas_por_inicio_estrutural(bloco, "13")
     linhas = {}
     padrao_periodo = periodo_ppp_regex()
@@ -3229,17 +3427,25 @@ def extrair_linhas_13_ocr(texto):
             dados.pop("13.3", None)
         linhas[idx] = dados
 
+    rotulados = extrair_subcampos_13_rotulados(bloco_original)
+    if not linhas and rotulados:
+        linhas[1] = dict(rotulados)
+        m_periodo = re.search(periodo_ppp_regex(), "\n".join(bloco_original), flags=re.IGNORECASE)
+        if m_periodo:
+            linhas[1]["13.1"] = m_periodo.group(0)
+
     # OCR de PPP escaneado frequentemente quebra os subcampos 13.4/13.5 em linhas próprias.
     if not linhas and any(re.search(r"13\.[4-7]", l) for l in bloco):
         linhas[1] = {"_linha_original": " | ".join(re.sub(r"\s+", " ", l).strip() for l in bloco if "13." in l)}
 
     if linhas:
         texto_bloco = "\n".join(bloco)
+        texto_bloco_original = "\n".join(bloco_original)
         primeiro = linhas.setdefault(1, {})
-        for codigo, valor in extrair_subcampos_13_rotulados(bloco).items():
-            primeiro.setdefault(codigo, valor)
+        for codigo, valor in rotulados.items():
+            primeiro[codigo] = valor
         if not primeiro.get("13.2"):
-            cnpj_bloco = re.search(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b", texto_bloco)
+            cnpj_bloco = re.search(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b", texto_bloco_original)
             if cnpj_bloco:
                 primeiro["13.2"] = cnpj_bloco.group(0)
         if not primeiro.get("13.2"):
@@ -3304,6 +3510,7 @@ def extrair_linhas_13_ocr(texto):
     return deduplicar_linhas_dict(linhas, ["13.1", "13.2", "13.3", "13.4", "13.5", "13.6", "13.7"])
 
 
+@st.cache_data(show_spinner=False)
 def extrair_linhas_14_ocr(texto):
     bloco = bloco_tabela_por_termos(
         texto,
@@ -3335,6 +3542,7 @@ def extrair_linhas_14_ocr(texto):
     return deduplicar_linhas_dict(linhas, ["14.1", "14.2"])
 
 
+@st.cache_data(show_spinner=False)
 def extrair_linhas_15_ocr(texto):
     bloco = bloco_tabela_por_termos(
         texto,
@@ -3455,6 +3663,7 @@ def extrair_linhas_15_ocr(texto):
         linhas[idx] = dados
         ultimo_idx = idx
 
+    linhas = suplementar_linhas_15_por_agentes(bloco, linhas)
     if linhas:
         texto_bloco = "\n".join(bloco)
         for idx, dados in linhas.items():
@@ -3465,7 +3674,7 @@ def extrair_linhas_15_ocr(texto):
                 pos = bloco_linhas.index(inicio)
                 contexto = " ".join(bloco_linhas[pos:pos + 5])
             except Exception:
-                contexto = " ".join(bloco_linhas[:8])
+                contexto = inicio if dados.get("_linha_suplementar") else " ".join(bloco_linhas[:8])
 
             if not dados.get("15.4"):
                 intensidade = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?|\b\d+(?:[,.]\d+)?\s*(?:ppm|mg/m[³3])\b|\b(?:qualitativ[ao]|quantitativ[ao]|ND)\b", contexto, flags=re.IGNORECASE)
@@ -3602,10 +3811,10 @@ def montar_linhas_compostas(texto, campo):
         epcs = extrair_epc_15_6(texto)
         sub159 = {s["codigo"]: s.get("resposta", "") for s in extrair_subitens_159(texto)}
         if sub159 and manuais:
-            for dados in manuais.values():
-                for codigo, resposta in sub159.items():
-                    if resposta and resposta != "não extraída":
-                        dados.setdefault(codigo, resposta)
+            primeira_linha = manuais[min(manuais)]
+            for codigo, resposta in sub159.items():
+                if resposta and resposta != "não extraída":
+                    primeira_linha.setdefault(codigo, resposta)
         if (tipos or epcs or sub159) and not manuais:
             manuais.setdefault(1, {})
             if tipos:
@@ -3715,7 +3924,7 @@ def montar_linhas_compostas(texto, campo):
             if nome or manual18:
                 manuais[1].setdefault("18.2", nome or manual18)
 
-    if not manuais and campo["numero"] != "16":
+    if not manuais and campo["numero"] not in {"16", "18"}:
         marcador_fim = {"13": "14", "14": "15", "15": "16", "16": "17", "18": None}.get(campo["numero"])
         candidatas = candidato_linha_tabela(texto, campo["nome"], marcador_fim)
         for idx, linha in enumerate(candidatas, start=1):
@@ -3851,6 +4060,7 @@ def valor_ausente_estrutural(valor):
     }
 
 
+@st.cache_data(show_spinner=False)
 def analisar_campos(texto):
     texto = limpar_placeholders_manuais_vazios(texto)
     return [campo_estruturado_para_resultado(campo, texto) for campo in PPP_CAMPOS_ESTRUTURADOS]
@@ -4152,6 +4362,7 @@ def coletar_base_legal_utilizada(falhas, agentes, epi, ltcat):
     return bases
 
 
+@st.cache_data(show_spinner=False)
 def gerar_parecer(texto, trf):
     texto = limpar_placeholders_manuais_vazios(texto)
     datas = extrair_datas(texto)
@@ -4504,6 +4715,9 @@ def deve_gerar_placeholder_subcampo(texto, campo, linha, numero, dados):
 
     indice_linha = linha.get("linha")
     if valor_manual_campo_linha(texto, numero, indice_linha):
+        return False
+
+    if numero.startswith("15.9 [") and indice_linha not in {None, 1}:
         return False
 
     admin = extrair_campos_administrativos_ocr(texto)
