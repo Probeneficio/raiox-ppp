@@ -952,6 +952,7 @@ def extrair_texto_pdf(uploaded_file):
                 except Exception:
                     texto += "\n" + pytesseract.image_to_string(img, lang="por+eng", config=config)
             texto += "\n" + ocr_regioes_tabeladas_ppp(imagens)
+            texto += "\n" + ocr_tabelas_grade_ppp(imagens)
             texto += "\n" + ocr_soc_celulas_ppp(imagens)
         except Exception as e:
             texto += f"\n[OCR não executado ou falhou: {e}]\n"
@@ -983,6 +984,102 @@ def ocr_regioes_tabeladas_ppp(imagens):
             except Exception:
                 continue
     return "\n".join(textos)
+
+
+def agrupar_posicoes_proximas(posicoes, distancia=3):
+    grupos = []
+    for pos in sorted(posicoes):
+        if not grupos or pos > grupos[-1][-1] + distancia:
+            grupos.append([pos])
+        else:
+            grupos[-1].append(pos)
+    return [int(sum(grupo) / len(grupo)) for grupo in grupos]
+
+
+def detectar_linhas_horizontais_grade(img):
+    try:
+        cinza = img.convert("L")
+        w, h = cinza.size
+        pixels = cinza.load()
+        inicio_x = int(w * 0.035)
+        fim_x = int(w * 0.965)
+        largura = max(1, fim_x - inicio_x)
+        candidatas = []
+        for y in range(int(h * 0.12), int(h * 0.96)):
+            escuros = sum(1 for x in range(inicio_x, fim_x) if pixels[x, y] < 180)
+            if escuros >= largura * 0.28:
+                candidatas.append(y)
+        return agrupar_posicoes_proximas(candidatas, distancia=3)
+    except Exception:
+        return []
+
+
+def detectar_linhas_verticais_faixa(img, y1, y2):
+    try:
+        cinza = img.convert("L")
+        w, h = cinza.size
+        pixels = cinza.load()
+        y1 = max(0, int(y1))
+        y2 = min(h, int(y2))
+        altura = max(1, y2 - y1)
+        candidatas = []
+        for x in range(int(w * 0.025), int(w * 0.975)):
+            escuros = sum(1 for y in range(y1, y2) if pixels[x, y] < 185)
+            if escuros >= altura * 0.62:
+                candidatas.append(x)
+        return agrupar_posicoes_proximas(candidatas, distancia=3)
+    except Exception:
+        return []
+
+
+def ocr_tabelas_grade_ppp(imagens):
+    """
+    Fallback geral para PPPs escaneados com tabelas variadas.
+    Detecta a grade da própria página e reconstrói linhas por células, sem
+    assumir coordenadas fixas de um fornecedor ou versão do formulário.
+    """
+    if pytesseract is None or not imagens:
+        return ""
+    textos = []
+    for pagina, img in enumerate(imagens, start=1):
+        w, h = img.size
+        horizontais = detectar_linhas_horizontais_grade(img)
+        if len(horizontais) < 4:
+            continue
+        linhas_emitidas = 0
+        for indice, (y1, y2) in enumerate(zip(horizontais, horizontais[1:]), start=1):
+            altura = y2 - y1
+            if altura < max(7, int(h * 0.004)) or altura > int(h * 0.10):
+                continue
+            verticais = detectar_linhas_verticais_faixa(img, y1, y2)
+            if len(verticais) < 3:
+                continue
+            celulas = []
+            for x1, x2 in zip(verticais, verticais[1:]):
+                largura = x2 - x1
+                if largura < max(8, int(w * 0.012)):
+                    continue
+                margem_x = max(1, int(largura * 0.025))
+                margem_y = max(1, int(altura * 0.08))
+                crop = img.crop((x1 + margem_x, y1 + margem_y, x2 - margem_x, y2 - margem_y))
+                valor = ocr_celula(crop, psm=7)
+                valor = re.sub(r"\s+", " ", valor or "").strip(" -:|")
+                if valor and len(valor) <= 220:
+                    celulas.append(valor)
+                else:
+                    celulas.append("")
+            if len(celulas) < 2 or not any(celulas):
+                continue
+            linha = " | ".join(celulas)
+            if len(re.sub(r"[\s|]", "", linha)) < 3:
+                continue
+            textos.append(f"OCR TABELA DINÂMICA PÁGINA {pagina} | linha {indice}: {linha}")
+            linhas_emitidas += 1
+            if linhas_emitidas >= 100:
+                break
+    if not textos:
+        return ""
+    return "\n=== OCR TABELAS DINÂMICAS ===\n" + "\n".join(textos)
 
 
 def preparar_imagem_ocr_celula(crop):
@@ -4456,20 +4553,21 @@ if st.button("🚀 Gerar Raio-X do PPP", use_container_width=True):
             st.warning("Nenhum agente nocivo identificado automaticamente.")
 
         st.subheader("⚠️ Checklist de campos")
-        for c in campos:
+        campos_com_pendencia = [
+            c for c in campos
+            if c.get("status") not in {"CONFORME/LOCALIZADO", "LOCALIZADO — NÃO APLICÁVEL"}
+        ]
+        if not campos_com_pendencia:
+            st.success("Nenhum campo com erro ou pendência de leitura.")
+        for c in campos_com_pendencia:
             if c.get("linhas"):
-                if c["status"] == "INCOMPLETO":
-                    st.warning(f"Campo {c['campo']} — {c['nome']}: {c['criticidade']} — há linha/subcampo incompleto")
-                else:
-                    st.success(f"Campo {c['campo']} — {c['nome']}: localizado")
+                st.warning(f"Campo {c['campo']} — {c['nome']}: {c['criticidade']} — há linha/subcampo incompleto")
                 with st.expander(f"Detalhes estruturados do Campo {c['campo']}", expanded=False):
                     for linha in c["linhas"]:
                         st.write(f"**Linha {linha['linha']} — {linha['status']}**")
                         for numero, dados in linha["subcampos"].items():
                             valor = dados.get("valor") or "não extraído"
                             st.write(f"- {numero} — {dados['nome']}: {valor}")
-            elif c.get("valor"):
-                st.success(f"Campo {c['campo']} — {c['nome']}: localizado — {c['valor']}")
             elif c["status"].startswith("AUSENTE"):
                 if c["criticidade"] == "CRÍTICA":
                     st.error(f"Campo {c['campo']} — {c['nome']}: {c['criticidade']}")
@@ -4495,4 +4593,3 @@ if st.button("🚀 Gerar Raio-X do PPP", use_container_width=True):
             mime="text/plain",
             use_container_width=True
         )
-
