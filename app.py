@@ -985,15 +985,35 @@ def ocr_regioes_tabeladas_ppp(imagens):
     return "\n".join(textos)
 
 
+def preparar_imagem_ocr_celula(crop):
+    """
+    Pré-processamento local para células de PPP SOC escaneado:
+    escala de cinza, aumento de 300%, threshold adaptativo e sharpen.
+    """
+    from PIL import ImageOps, ImageFilter
+
+    img = crop.convert("L")
+    img = ImageOps.autocontrast(img)
+    img = img.resize((max(1, img.width * 3), max(1, img.height * 3)))
+    fundo = img.filter(ImageFilter.MedianFilter(size=15))
+    img = img.point(lambda p: p)
+    img = ImageOps.autocontrast(img)
+    img = img.filter(ImageFilter.SHARPEN)
+    img = img.filter(ImageFilter.UnsharpMask(radius=1, percent=180, threshold=2))
+    # Threshold adaptativo sem dependência adicional: compara cada pixel
+    # com a mediana de sua vizinhança, preservando letras em células sombreadas.
+    img = img.convert("L")
+    fundo = fundo.convert("L")
+    pixels = [0 if px < max(90, bg - 18) else 255 for px, bg in zip(img.getdata(), fundo.getdata())]
+    img.putdata(pixels)
+    return img
+
+
 def ocr_celula(crop, psm=6):
     if pytesseract is None:
         return ""
     try:
-        from PIL import ImageOps, ImageFilter
-        img = crop.convert("L")
-        img = ImageOps.autocontrast(img)
-        img = img.resize((img.width * 2, img.height * 2))
-        img = img.filter(ImageFilter.SHARPEN)
+        img = preparar_imagem_ocr_celula(crop)
     except Exception:
         img = crop
     config = f"--psm {psm} -c preserve_interword_spaces=1"
@@ -1007,10 +1027,145 @@ def ocr_celula(crop, psm=6):
     return re.sub(r"\s+", " ", texto or "").strip(" -:|")
 
 
+def ocr_celula_soc_validada(crop, numero, psm=6):
+    """
+    Faz OCR da célula e tenta uma segunda segmentação quando a primeira leitura
+    não atende ao formato esperado para o subcampo.
+    """
+    tentativas = [psm]
+    for alternativo in [7, 6, 11, 13]:
+        if alternativo not in tentativas:
+            tentativas.append(alternativo)
+    primeiro_bruto = ""
+    for modo in tentativas:
+        bruto = ocr_celula(crop, psm=modo)
+        if bruto and not primeiro_bruto:
+            primeiro_bruto = bruto
+        validado = validar_valor_ocr_soc(numero, bruto)
+        if validado:
+            return validado, bruto
+    return "", primeiro_bruto
+
+
 def crop_relativo(img, box):
     w, h = img.size
     x1, y1, x2, y2 = box
     return img.crop((int(w * x1), int(h * y1), int(w * x2), int(h * y2)))
+
+
+def texto_ocr_soc_legivel(valor, minimo_palavras=1, minimo_caracteres=3):
+    valor = re.sub(r"\s+", " ", str(valor or "")).strip(" -:|")
+    if len(valor) < minimo_caracteres:
+        return False
+    if normalizar(valor) in {"do secnicio", "ee e", "e es mm mm as", "sn narrar masninass", "rsnictras"}:
+        return False
+    letras = re.findall(r"[A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]", valor)
+    if len(letras) < minimo_caracteres or len(letras) / max(len(valor), 1) < 0.55:
+        return False
+    palavras = re.findall(r"[A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]{3,}", valor)
+    return len(palavras) >= minimo_palavras
+
+
+def normalizar_resposta_ocr_soc(valor):
+    valor = re.sub(r"\s+", " ", str(valor or "")).strip(" -:|")
+    vn = normalizar(valor)
+    respostas = {
+        "s": "Sim",
+        "sim": "Sim",
+        "n": "Não",
+        "nao": "Não",
+        "na": "NA",
+        "n a": "NA",
+        "nao aplicavel": "NA",
+        "nao se aplica": "NA",
+    }
+    return respostas.get(vn, "")
+
+
+def validar_valor_ocr_soc(numero, valor):
+    valor = re.sub(r"\s+", " ", str(valor or "")).strip(" -:|")
+    if not valor:
+        return ""
+    if numero in {"13.1", "14.1", "15.1", "16.1"}:
+        valor = re.sub(r"(\d{2}/\d{2}/\d)\s+(\d{3}\b)", r"\1\2", valor)
+        m = re.search(r"\b(?:\d{2}/\d{2}/\d{4}|\d{2}/\d{4})\s*a(?:\s*(?:\d{2}/\d{2}/\d{4}|atual))?\b", valor, flags=re.IGNORECASE)
+        return m.group(0) if m else ""
+    if numero == "13.2":
+        m = re.search(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b", valor)
+        return m.group(0) if m else ""
+    if numero in {"13.3", "13.4", "13.5"}:
+        return valor if texto_ocr_soc_legivel(valor) else ""
+    if numero == "13.6":
+        m = re.search(r"\b\d{4,6}(?:-\d{1,2})?\b", valor)
+        return m.group(0) if m else ""
+    if numero == "13.7":
+        m = re.search(r"^\s*(00|01|02|03|04|05|06|07|08|09|0515)\s*$", valor)
+        return m.group(1) if m else ""
+    if numero == "14.2":
+        return valor if texto_ocr_soc_legivel(valor, minimo_palavras=3, minimo_caracteres=12) else ""
+    if numero == "15.2":
+        vn = normalizar(valor)
+        tipos = {
+            "f": "Físico",
+            "fisico": "Físico",
+            "q": "Químico",
+            "quimico": "Químico",
+            "b": "Biológico",
+            "biologico": "Biológico",
+            "ergonomico": "Ergonômico",
+            "acidente": "Acidente",
+        }
+        return tipos.get(vn, "")
+    if numero == "15.3":
+        vn = normalizar(valor)
+        if any(t in vn for t in ["foi tentada", "funcionamento", "prazo de validade", "periodicidade", "higienizacao", "requisitos da nr"]):
+            return ""
+        agentes = extrair_agentes_detectados_campo15(valor)
+        return valor if agentes and texto_ocr_soc_legivel(valor) else ""
+    if numero == "15.4":
+        if normalizar_resposta_ocr_soc(valor) == "NA":
+            return "NA"
+        m = re.search(r"\b\d+(?:[,.]\d+)?\s*(?:dB\s*\(?A?\)?|ppm|mg/m[³3])|\b(?:qualitativ[ao]|quantitativ[ao]|ND)\b", valor, flags=re.IGNORECASE)
+        return valor if m else ""
+    if numero == "15.5":
+        if normalizar_resposta_ocr_soc(valor) == "NA":
+            return "NA"
+        m = re.search(r"(?:NHO[-\s]*01|NR[-\s]*15(?:\s*Anexo\s*\d+)?|Decibel.{0,3}metro|Dos.{0,3}metria|Medi[cç][aã]o\s+de\s+NPS|Qualitativ[ao]|Quantitativ[ao])", valor, flags=re.IGNORECASE)
+        return valor if m else ""
+    if numero in {"15.6", "15.7"} or numero.startswith("15.9"):
+        return normalizar_resposta_ocr_soc(valor)
+    if numero == "15.8":
+        if normalizar_resposta_ocr_soc(valor) == "NA":
+            return "NA"
+        return valor if re.match(r"^\s*\d{3,8}(?:\s*[,/]\s*\d{3,8})*\s*$", valor) else ""
+    if numero == "16.2":
+        m = re.search(r"\b\d{3}\.?\d{3,5}\.?\d{2,3}-?\d{1,2}\b", valor)
+        return m.group(0) if m and 10 <= len(re.sub(r"\D", "", m.group(0))) <= 11 else ""
+    if numero == "16.3":
+        m = re.search(r"\b(?:(?:CRM|CREA|CRQ|MTE)\s*[-.]?\s*\d{2,12}(?:/[A-Z]{2})?|\d{3,8}(?:/[A-Z]{2}|\s*[A-Z]-[A-Z]{2}))\b", valor, flags=re.IGNORECASE)
+        return re.sub(r"\s+", " ", m.group(0)).strip() if m else ""
+    if numero == "16.4":
+        palavras = re.findall(r"[A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]{2,}", valor)
+        return valor if texto_ocr_soc_legivel(valor, minimo_palavras=2, minimo_caracteres=8) and len(palavras) >= 2 else ""
+    return valor
+
+
+def adicionar_ocr_soc_validado(textos, rejeitados, numero, nome, linha, valor):
+    validado = validar_valor_ocr_soc(numero, valor)
+    if validado:
+        textos.append(f"{numero} - {nome} | linha {linha}: {validado}")
+    elif valor:
+        rejeitados.append(f"OCR SOC INVÁLIDO - campo {numero} | linha {linha}: preencher manualmente")
+    return validado
+
+
+def adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop, psm=6):
+    validado, bruto = ocr_celula_soc_validada(crop, numero, psm=psm)
+    if validado:
+        textos.append(f"{numero} - {nome} | linha {linha}: {validado}")
+    elif bruto:
+        rejeitados.append(f"OCR SOC INVÁLIDO - campo {numero} | linha {linha}: preencher manualmente")
+    return validado
 
 
 def ocr_soc_celulas_ppp(imagens):
@@ -1022,23 +1177,22 @@ def ocr_soc_celulas_ppp(imagens):
     if pytesseract is None or not imagens:
         return ""
     textos = ["\n=== OCR SOC POR CÉLULAS ==="]
+    rejeitados = []
     img = imagens[0]
 
     celulas_13_14 = [
-        ("13.1", "Período", 1, (0.065, 0.300, 0.245, 0.365), 6),
-        ("13.2", "CNPJ", 1, (0.405, 0.278, 0.915, 0.307), 6),
-        ("13.3", "Setor", 1, (0.405, 0.307, 0.915, 0.324), 7),
-        ("13.4", "Cargo", 1, (0.405, 0.324, 0.915, 0.340), 7),
-        ("13.5", "Função", 1, (0.405, 0.340, 0.915, 0.356), 7),
-        ("13.6", "CBO", 1, (0.405, 0.356, 0.915, 0.372), 7),
-        ("13.7", "Código GFIP/eSocial", 1, (0.405, 0.372, 0.915, 0.389), 7),
+        ("13.1", "Período", 1, (0.065, 0.303, 0.245, 0.366), 6),
+        ("13.2", "CNPJ", 1, (0.405, 0.283, 0.915, 0.304), 6),
+        ("13.3", "Setor", 1, (0.405, 0.304, 0.915, 0.317), 7),
+        ("13.4", "Cargo", 1, (0.405, 0.317, 0.915, 0.329), 7),
+        ("13.5", "Função", 1, (0.405, 0.329, 0.915, 0.342), 7),
+        ("13.6", "CBO", 1, (0.405, 0.342, 0.915, 0.354), 7),
+        ("13.7", "Código GFIP/eSocial", 1, (0.405, 0.354, 0.915, 0.366), 7),
         ("14.1", "Período", 1, (0.070, 0.386, 0.250, 0.405), 7),
         ("14.2", "Descrição das atividades", 1, (0.250, 0.386, 0.915, 0.405), 6),
     ]
     for numero, nome, linha, box, psm in celulas_13_14:
-        valor = ocr_celula(crop_relativo(img, box), psm=psm)
-        if valor:
-            textos.append(f"{numero} - {nome} | linha {linha}: {valor}")
+        adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop_relativo(img, box), psm=psm)
 
     colunas_15 = [
         ("15.1", "Período", (0.070, 0.000, 0.155, 0.000), 7),
@@ -1052,48 +1206,48 @@ def ocr_soc_celulas_ppp(imagens):
     ]
     linhas_15 = [
         (1, 0.458, 0.495),
-        (2, 0.495, 0.548),
-        (3, 0.548, 0.603),
-        (4, 0.603, 0.642),
-        (5, 0.642, 0.681),
-        (6, 0.681, 0.720),
-        (7, 0.720, 0.750),
-        (8, 0.750, 0.779),
-        (9, 0.779, 0.811),
+        (2, 0.495, 0.540),
+        (3, 0.540, 0.580),
+        (4, 0.580, 0.610),
+        (5, 0.610, 0.640),
+        (6, 0.640, 0.670),
+        (7, 0.670, 0.695),
+        (8, 0.695, 0.719),
+        (9, 0.719, 0.744),
     ]
     for linha, y1, y2 in linhas_15:
         valores_linha = []
+        valores_por_numero = {}
         for numero, nome, (x1, _, x2, _), psm in colunas_15:
-            valor = ocr_celula(crop_relativo(img, (x1, y1, x2, y2)), psm=psm)
-            if valor:
-                textos.append(f"{numero} - {nome} | linha {linha}: {valor}")
-                valores_linha.append(valor)
-        if valores_linha:
+            validado = adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop_relativo(img, (x1, y1, x2, y2)), psm=psm)
+            if validado:
+                valores_linha.append(validado)
+                valores_por_numero[numero] = validado
+        if all(valores_por_numero.get(numero) for numero in ["15.1", "15.2", "15.3"]):
             textos.append(f"15 - Linha ambiental OCR SOC | linha {linha}: " + " | ".join(valores_linha))
 
     celulas_159 = [
-        ("15.9 [01]", "Medidas coletivas/administrativas antes do EPI", 1, (0.835, 0.812, 0.920, 0.832), 7),
-        ("15.9 [02]", "Funcionamento e uso ininterrupto do EPI", 1, (0.835, 0.832, 0.920, 0.853), 7),
-        ("15.9 [03]", "Prazo de validade/CA", 1, (0.835, 0.853, 0.920, 0.872), 7),
-        ("15.9 [04]", "Periodicidade de troca", 1, (0.835, 0.872, 0.920, 0.891), 7),
-        ("15.9 [05]", "Higienização", 1, (0.835, 0.891, 0.920, 0.910), 7),
+        ("15.9 [01]", "Medidas coletivas/administrativas antes do EPI", 1, (0.835, 0.753, 0.920, 0.776), 7),
+        ("15.9 [02]", "Funcionamento e uso ininterrupto do EPI", 1, (0.835, 0.776, 0.920, 0.801), 7),
+        ("15.9 [03]", "Prazo de validade/CA", 1, (0.835, 0.801, 0.920, 0.819), 7),
+        ("15.9 [04]", "Periodicidade de troca", 1, (0.835, 0.819, 0.920, 0.840), 7),
+        ("15.9 [05]", "Higienização", 1, (0.835, 0.840, 0.920, 0.855), 7),
     ]
     for numero, nome, linha, box, psm in celulas_159:
-        valor = ocr_celula(crop_relativo(img, box), psm=psm)
-        if valor:
-            textos.append(f"{numero} - {nome} | linha {linha}: {valor}")
+        adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop_relativo(img, box), psm=psm)
 
     celulas_16 = [
-        ("16.1", "Período responsável técnico", 1, (0.070, 0.884, 0.230, 0.904), 7),
-        ("16.2", "NIT/CPF do responsável", 1, (0.230, 0.884, 0.485, 0.904), 7),
-        ("16.3", "Registro conselho de classe", 1, (0.485, 0.884, 0.685, 0.904), 7),
-        ("16.4", "Nome do profissional legalmente habilitado", 1, (0.685, 0.884, 0.920, 0.904), 6),
+        ("16.1", "Período responsável técnico", 1, (0.090, 0.876, 0.230, 0.895), 7),
+        ("16.2", "NIT/CPF do responsável", 1, (0.230, 0.876, 0.485, 0.895), 7),
+        ("16.3", "Registro conselho de classe", 1, (0.485, 0.876, 0.685, 0.895), 7),
+        ("16.4", "Nome do profissional legalmente habilitado", 1, (0.685, 0.876, 0.920, 0.895), 6),
     ]
     for numero, nome, linha, box, psm in celulas_16:
-        valor = ocr_celula(crop_relativo(img, box), psm=psm)
-        if valor:
-            textos.append(f"{numero} - {nome} | linha {linha}: {valor}")
+        adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop_relativo(img, box), psm=psm)
 
+    if rejeitados:
+        textos.append("\n=== LEITURAS OCR SOC REJEITADAS ===")
+        textos.extend(rejeitados)
     return "\n".join(textos)
 
 
@@ -3199,15 +3353,21 @@ def montar_linhas_compostas(texto, campo):
         for idx, dados in extrair_linhas_13_ocr(texto).items():
             manuais.setdefault(idx, {})
             for k, v in dados.items():
-                if v:
-                    manuais[idx].setdefault(k, v)
+                if not v:
+                    continue
+                if k.startswith("13.") and not validar_valor_ocr_soc(k, v):
+                    continue
+                manuais[idx].setdefault(k, v)
 
     if campo["numero"] == "14":
         for idx, dados in extrair_linhas_14_ocr(texto).items():
             manuais.setdefault(idx, {})
             for k, v in dados.items():
-                if v:
-                    manuais[idx].setdefault(k, v)
+                if not v:
+                    continue
+                if k.startswith("14.") and not validar_valor_ocr_soc(k, v):
+                    continue
+                manuais[idx].setdefault(k, v)
 
     if campo["numero"] == "16":
         responsaveis = extrair_responsaveis_ambientais_linhas(texto)
@@ -3222,8 +3382,11 @@ def montar_linhas_compostas(texto, campo):
         for idx, dados in extrair_linhas_15_ocr(texto).items():
             manuais.setdefault(idx, {})
             for k, v in dados.items():
-                if v:
-                    manuais[idx].setdefault(k, v)
+                if not v:
+                    continue
+                if k.startswith("15.") and not validar_valor_ocr_soc(k, v):
+                    continue
+                manuais[idx].setdefault(k, v)
         tipos = extrair_tipo_15_2(texto)
         epcs = extrair_epc_15_6(texto)
         sub159 = {s["codigo"]: s.get("resposta", "") for s in extrair_subitens_159(texto)}
