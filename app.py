@@ -1032,6 +1032,32 @@ def detectar_linhas_verticais_faixa(img, y1, y2):
         return []
 
 
+def linha_ocr_dinamica_relevante(linha):
+    """
+    Mantém somente linhas da grade com algum sinal estrutural útil.
+    Grades de scans ruins geram muitos fragmentos visuais que poluem o texto
+    editável e podem ser interpretados como novas linhas de tabela.
+    """
+    linha = re.sub(r"\s+", " ", str(linha or "")).strip(" |")
+    if not linha or len(re.sub(r"[^A-Za-z0-9]", "", linha)) < 3:
+        return False
+    if re.search(
+        r"\b(?:1[2-9]|20)(?:\.\d+)?\b|"
+        r"\b\d{2}/\d{2}/\d{4}\b|"
+        r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b|"
+        r"\b\d{3}\.?\d{3,5}\.?\d{2,3}-?\d{1,2}\b|"
+        r"\b(?:F[ií]sico|Qu[ií]mico|Biol[oó]gico|Ergon[oô]mico|Acidente)\b|"
+        r"\b(?:Ru[ií]do|Vibra[cç][aã]o|Radia[cç][aã]o|Umidade|Calor|Fumos|Poeira|"
+        r"Hidrocarbonetos?|[ÓO]leos?|Pesticidas?|Agrot[oó]xicos?|Bact[eé]rias?|Fungos?|V[ií]rus)\b|"
+        r"\b(?:dB\s*\(?A?\)?|ppm|mg/m[³3]|NHO[-\s]*01|NR[-\s]*15|CRM|CREA|CRQ|MTE)\b|"
+        r"\b(?:CNPJ|CNAE|CBO|GFIP|Setor|Cargo|Fun[cç][aã]o|Per[ií]odo|Profissiografia)\b",
+        linha,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    return False
+
+
 def ocr_tabelas_grade_ppp(imagens):
     """
     Fallback geral para PPPs escaneados com tabelas variadas.
@@ -1072,6 +1098,8 @@ def ocr_tabelas_grade_ppp(imagens):
                 continue
             linha = " | ".join(celulas)
             if len(re.sub(r"[\s|]", "", linha)) < 3:
+                continue
+            if not linha_ocr_dinamica_relevante(linha):
                 continue
             textos.append(f"OCR TABELA DINÂMICA PÁGINA {pagina} | linha {indice}: {linha}")
             linhas_emitidas += 1
@@ -1180,12 +1208,24 @@ def normalizar_resposta_ocr_soc(valor):
 
 
 def validar_valor_ocr_soc(numero, valor):
-    valor = re.sub(r"\s+", " ", str(valor or "")).strip(" -:|")
+    bruto = re.sub(r"\s+", " ", str(valor or "")).strip()
+    if bruto in {"-", "—"} and numero in {"13.5", "13.7", "15.6", "15.7", "15.8"}:
+        return "NA"
+    if normalizar(bruto) in {"na", "n/a", "nao aplicavel", "nao se aplica"} and numero in {
+        "13.5", "13.7", "15.4", "15.5", "15.6", "15.7", "15.8",
+    }:
+        return "NA"
+    valor = bruto.strip(" -:|")
     if not valor:
         return ""
     if numero in {"13.1", "14.1", "15.1", "16.1"}:
         valor = re.sub(r"(\d{2}/\d{2}/\d)\s+(\d{3}\b)", r"\1\2", valor)
-        m = re.search(r"\b(?:\d{2}/\d{2}/\d{4}|\d{2}/\d{4})\s*a(?:\s*(?:\d{2}/\d{2}/\d{4}|atual))?\b", valor, flags=re.IGNORECASE)
+        m = re.search(
+            r"\b(?:\d{2}/\d{2}/\d{4}|\d{2}/\d{4})\s*(?:a|at[eé]|-)"
+            r"(?:\s*(?:\d{2}/\d{2}/\d{4}|(?:data\s+)?atual))?\b",
+            valor,
+            flags=re.IGNORECASE,
+        )
         return m.group(0) if m else ""
     if numero == "13.2":
         m = re.search(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b", valor)
@@ -1982,19 +2022,19 @@ def extrair_responsaveis_ambientais_linhas(texto):
 
     # Padrão principal: período, opcional CPF/NIT, registro profissional, nome
     padroes = [
-        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s*a)\s+(?P<cpf>[\d\.\-]{{8,20}})\s+(?P<registro>{registro_conselho})\s+\|?\s*(?P<nome>[^\n]{{5,80}})",
-        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s*a\s*(?:\d{{2}}/\d{{2}}/\d{{4}}|atual)?)\s+(?:(?P<cpf>[\d\.\-]{{8,20}})\s+)?(?P<registro>{registro_conselho})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{{5,80}})",
-        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s+a\s+(?:\d{{2}}/\d{{2}}/\d{{4}}|atual)?)\s+\|?(?P<cpf>[\d\.\-]{{8,20}})\s+(?P<registro>{registro_conselho})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{{5,80}})",
-        rf"(?P<periodo>(?<!\d{{2}}/)\d{{2}}/\d{{4}})\s+(?:(?P<cpf>[\d\.\-]{{8,20}})\s+)?(?P<registro>{registro_conselho})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{{5,80}})",
+        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s*a)\s+(?P<cpf>[\d\.\-\s]{{8,24}}?)\s+(?P<registro>{registro_conselho})\s+\|?\s*(?P<nome>[^\n]{{5,80}})",
+        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s*a\s*(?:\d{{2}}/\d{{2}}/\d{{4}}|atual)?)\s+(?:(?P<cpf>[\d\.\-\s]{{8,24}}?)\s+)?(?P<registro>{registro_conselho})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{{5,80}})",
+        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s+a\s+(?:\d{{2}}/\d{{2}}/\d{{4}}|atual)?)\s+\|?(?P<cpf>[\d\.\-\s]{{8,24}}?)\s+(?P<registro>{registro_conselho})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{{5,80}})",
+        rf"(?P<periodo>(?<!\d{{2}}/)\d{{2}}/\d{{4}})\s+(?:(?P<cpf>[\d\.\-\s]{{8,24}}?)\s+)?(?P<registro>{registro_conselho})\s+\|?\s*(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\s\.]{{5,80}})",
     ]
 
     texto_compacto = "\n".join(linhas)
 
     padroes_linha = [
-        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s+a\s+\d{{2}}/\d{{2}}/\d{{4}})\s+(?P<cpf>[\d\.\-]{{8,20}})\s+(?P<registro>{registro_conselho})\s+(?P<nome>.+)$",
-        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s+a\s+atual)\s+(?P<cpf>[\d\.\-]{{8,20}})\s+(?P<registro>{registro_conselho})\s+(?P<nome>.+)$",
-        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s+a)\s+(?P<cpf>[\d\.\-]{{8,20}})\s+(?P<registro>{registro_conselho})\s+(?P<nome>.+)$",
-        rf"(?P<periodo>(?<!\d{{2}}/)\d{{2}}/\d{{4}})\s+(?:(?P<cpf>[\d\.\-]{{8,20}})\s+)?(?P<registro>{registro_conselho})\s+(?P<nome>.+)$",
+        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s+a\s+\d{{2}}/\d{{2}}/\d{{4}})\s+(?P<cpf>[\d\.\-\s]{{8,24}}?)\s+(?P<registro>{registro_conselho})\s+(?P<nome>.+)$",
+        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s+a\s+atual)\s+(?P<cpf>[\d\.\-\s]{{8,24}}?)\s+(?P<registro>{registro_conselho})\s+(?P<nome>.+)$",
+        rf"(?P<periodo>\d{{2}}/\d{{2}}/\d{{4}}\s+a)\s+(?P<cpf>[\d\.\-\s]{{8,24}}?)\s+(?P<registro>{registro_conselho})\s+(?P<nome>.+)$",
+        rf"(?P<periodo>(?<!\d{{2}}/)\d{{2}}/\d{{4}})\s+(?:(?P<cpf>[\d\.\-\s]{{8,24}}?)\s+)?(?P<registro>{registro_conselho})\s+(?P<nome>.+)$",
     ]
     for linha in linhas:
         if not re.search(r"\b(?:CRM|CREA|CRQ|MTE)\b|\b\d{3,8}(?:\s*[A-Z]-[A-Z]{2}|/[A-Z]{2})\b", linha, flags=re.IGNORECASE):
@@ -2007,6 +2047,7 @@ def extrair_responsaveis_ambientais_linhas(texto):
             if re.search(r"\ba$", periodo, flags=re.IGNORECASE):
                 periodo = periodo + " atual"
             cpf = (m.groupdict().get("cpf") or "").strip()
+            cpf = normalizar_cpf_nit_visual(cpf) or ""
             registro = re.sub(r"\s+", " ", m.group("registro")).strip()
             nome = limpar_nome_responsavel_tecnico(m.group("nome"))
             if "nome do profissional" in normalizar(nome) or "profissional legalmente" in normalizar(nome):
@@ -2034,6 +2075,7 @@ def extrair_responsaveis_ambientais_linhas(texto):
             if re.search(r"\ba$", periodo, flags=re.IGNORECASE):
                 periodo = periodo + " atual"
             cpf = (m.groupdict().get("cpf") or "").strip()
+            cpf = normalizar_cpf_nit_visual(cpf) or ""
             registro = re.sub(r"\s+", " ", m.group("registro")).strip()
             nome = limpar_nome_responsavel_tecnico(m.group("nome"))
 
@@ -2955,7 +2997,7 @@ def candidato_linha_tabela(texto, inicio, fim=None):
 
 def periodo_ppp_regex():
     data = r"(?:0[1-9]|[12]\d|3[01])/(?:0[1-9]|1[0-2])/\d{4}|(?:0[1-9]|1[0-2])/\d{4}"
-    return rf"(?:{data})(?:\s*(?:a|A|-)\s*(?:{data}|atual|Atual|ATUAL))?"
+    return rf"(?:{data})(?:\s*(?:a|at[eé]|-)\s*(?:{data}|(?:data\s+)?atual))?"
 
 
 def periodo_ppp_linha(linha):
@@ -3102,6 +3144,38 @@ def bloco_tabela_por_termos(texto, termos_inicio, termos_fim=None):
     return linhas[inicio:fim]
 
 
+def extrair_subcampos_13_rotulados(bloco):
+    """
+    Complementa layouts modernos em que os rótulos 13.3 a 13.7 aparecem
+    empilhados e o valor fica na linha imediatamente seguinte.
+    """
+    texto_bloco = "\n".join(bloco or [])
+    encontrados = {}
+    rotulos = {
+        "13.3": r"Setor",
+        "13.4": r"Cargo",
+        "13.5": r"Fun[cç][aã]o",
+        "13.6": r"CBO",
+        "13.7": r"(?:C[oó]digo\s*)?(?:GFIP/eSocial|GFIP|eSocial)",
+    }
+    proximo = r"(?=\s*(?:13\.[3-7]\b|14\s*[-–]|14\.1\b|Profissiografia\b))"
+    for codigo, rotulo in rotulos.items():
+        m = re.search(
+            rf"{re.escape(codigo)}\s*[-–:]?\s*{rotulo}\s*(.*?)" + proximo,
+            texto_bloco + "\n14 -",
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if not m:
+            continue
+        valor = re.sub(r"\s+", " ", m.group(1)).strip(" :|")
+        if valor in {"-", "—"}:
+            valor = "NA"
+        validado = validar_valor_ocr_soc(codigo, valor)
+        if validado:
+            encontrados[codigo] = validado
+    return encontrados
+
+
 def extrair_linhas_13_ocr(texto):
     bloco = bloco_tabela_por_termos(
         texto,
@@ -3162,6 +3236,8 @@ def extrair_linhas_13_ocr(texto):
     if linhas:
         texto_bloco = "\n".join(bloco)
         primeiro = linhas.setdefault(1, {})
+        for codigo, valor in extrair_subcampos_13_rotulados(bloco).items():
+            primeiro.setdefault(codigo, valor)
         if not primeiro.get("13.2"):
             cnpj_bloco = re.search(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b", texto_bloco)
             if cnpj_bloco:
@@ -3787,17 +3863,23 @@ def corpus_agentes_campo15(texto):
             valor = dados.get(chave, "")
             if valor and not valor_ausente_estrutural(valor):
                 partes.append(str(valor))
-    if partes:
-        return " ".join(partes)
-    legado = corpus_agentes_legado(texto)
-    if legado:
-        return legado
     bloco = bloco_tabela_por_termos(
         texto,
         ["15 - exposição", "15 exposicao", "15 -", "15.1", "exposição a fatores de riscos", "exposicao a fatores de riscos"],
         ["15.9", "16 - respons", "16.1", "responsável pelos registros", "responsavel pelos registros"],
     )
-    return " ".join(re.sub(r"\s+", " ", l).strip() for l in bloco)
+    texto_bloco = " ".join(re.sub(r"\s+", " ", l).strip() for l in bloco)
+    if not ppp_sem_agentes_declarados(texto_bloco):
+        # Mesmo quando uma linha já foi estruturada, o OCR pode ter omitido a
+        # repetição de período/tipo nas linhas seguintes. Reaproveita somente
+        # agentes expressamente presentes dentro do Campo 15.
+        partes.extend(extrair_agentes_detectados_campo15(texto_bloco))
+    if partes:
+        return " ".join(dict.fromkeys(partes))
+    legado = corpus_agentes_legado(texto)
+    if legado:
+        return legado
+    return texto_bloco
 
 
 def montar_item_agente(chave, info):
