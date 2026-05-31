@@ -1121,7 +1121,7 @@ def validar_valor_ocr_soc(numero, valor):
         if any(t in vn for t in ["foi tentada", "funcionamento", "prazo de validade", "periodicidade", "higienizacao", "requisitos da nr"]):
             return ""
         agentes = extrair_agentes_detectados_campo15(valor)
-        return valor if agentes and texto_ocr_soc_legivel(valor) else ""
+        return " | ".join(agentes) if agentes else ""
     if numero == "15.4":
         if normalizar_resposta_ocr_soc(valor) == "NA":
             return "NA"
