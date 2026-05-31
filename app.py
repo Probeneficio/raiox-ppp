@@ -907,12 +907,18 @@ def normalizar(texto):
     return texto
 
 
+OCR_PIPELINE_VERSION = "2026-05-31-soc-v2"
+
+
 def extrair_texto_pdf(uploaded_file):
-    return extrair_texto_pdf_bytes(uploaded_file.read())
+    return extrair_texto_pdf_bytes(uploaded_file.read(), OCR_PIPELINE_VERSION)
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60 * 24)
-def extrair_texto_pdf_bytes(pdf_bytes):
+def extrair_texto_pdf_bytes(pdf_bytes, pipeline_version):
+    # A versão integra a chave do cache. Ao evoluir o OCR, o mesmo PDF precisa
+    # ser processado novamente em vez de reutilizar uma extração antiga.
+    _ = pipeline_version
     partes = []
 
     if pdfplumber is not None:
