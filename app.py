@@ -1168,6 +1168,20 @@ def adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop, psm=6)
     return validado
 
 
+def layout_soc_ppp8_compativel(img):
+    """
+    O perfil abaixo foi calibrado para a folha SOC larga do PPP8.
+    Não deve ser aplicado em formulários antigos ou em outros templates.
+    """
+    if img is None:
+        return False
+    w, h = img.size
+    if not w or not h:
+        return False
+    proporcao = w / h
+    return 0.715 <= proporcao <= 0.735
+
+
 def ocr_soc_celulas_ppp(imagens):
     """
     Fallback específico para PPP SOC escaneado.
@@ -1178,7 +1192,9 @@ def ocr_soc_celulas_ppp(imagens):
         return ""
     textos = ["\n=== OCR SOC POR CÉLULAS ==="]
     rejeitados = []
-    img = imagens[0]
+    img = next((pagina for pagina in imagens if layout_soc_ppp8_compativel(pagina)), None)
+    if img is None:
+        return ""
 
     celulas_13_14 = [
         ("13.1", "Período", 1, (0.065, 0.303, 0.245, 0.366), 6),
@@ -1333,15 +1349,15 @@ def limpar_valor_campo_escalar(numero, valor):
     if not valor:
         return ""
     if numero == "2":
-        valor = re.split(r"\b3\s*[-–:]?\s*CNAE\b|\bCNAE\b", valor, maxsplit=1, flags=re.IGNORECASE)[0]
+        valor = re.split(r"\b3\s*[-–:]?\s*CNAE\b|\bCNAE\b|\b4\s*[-–:]?\s*Nome\s+do\s+Trabalhador\b", valor, maxsplit=1, flags=re.IGNORECASE)[0]
     elif numero == "4":
-        valor = re.split(r"\b5\s*[-–:]?\s*BR/?PDH\b|\b6\s*[-–:]?\s*NIT\b|\bNIT\b", valor, maxsplit=1, flags=re.IGNORECASE)[0]
+        valor = re.split(r"\b5\s*[-–:]?\s*BR/?PDH\b|\b6\s*[-–:]?\s*(?:NIT|CPF)\b|\b(?:NIT|CPF)\b|\b7\s*[-–:]?\s*Data\s+(?:do\s+)?Nascimento\b|\bData\s+(?:do\s+)?Nascimento\b", valor, maxsplit=1, flags=re.IGNORECASE)[0]
     elif numero == "5":
         m = re.search(r"\b(NA|N/?A|N[aã]o\s+aplic[aá]vel)\b", valor, flags=re.IGNORECASE)
-        valor = m.group(1) if m else valor
+        valor = m.group(1) if m else ""
     elif numero == "6":
         m = re.search(r"\b\d{10,11}\b|\b\d{3}[\.\d-]{6,20}\b", valor)
-        valor = m.group(0) if m else valor
+        valor = m.group(0) if m else ""
     elif numero == "7":
         m = re.search(r"\b\d{2}/\d{2}/\d{4}\b|\b\d{2}/\d{6}\b", valor)
         valor = normalizar_data_ocr(m.group(0)) if m else valor
@@ -1351,6 +1367,8 @@ def limpar_valor_campo_escalar(numero, valor):
         if m:
             bruto = m.group(1) or m.group(2)
             valor = "Masculino" if normalizar(bruto).startswith("m") else "Feminino"
+        else:
+            valor = ""
     elif numero == "9":
         m = re.search(r"\b\d{3,}/\d{2,}(?:\s*[-/]\s*[A-Z]{2})?\b", valor, flags=re.IGNORECASE)
         valor = re.sub(r"/([A-Z]{2})$", r" - \1", m.group(0).strip()) if m else valor
@@ -1359,7 +1377,10 @@ def limpar_valor_campo_escalar(numero, valor):
         valor = normalizar_data_ocr(m.group(0)) if m else valor
     elif numero == "11":
         m = re.search(r"\b(NA|N/?A|N[aã]o\s+aplic[aá]vel|Sim|N[aã]o)\b", valor, flags=re.IGNORECASE)
-        valor = m.group(1) if m else valor
+        valor = m.group(1) if m else ""
+    elif numero == "12":
+        if re.search(r"\b(?:12\.1|12\.2)\b|\b(?:Data\s+do\s+Registro|N[uú]mero\s+da\s+CAT)\b", valor, flags=re.IGNORECASE):
+            valor = ""
     elif numero == "17":
         m = re.search(r"\b\d{2}/\d{2}/\d{4}\b", valor)
         valor = m.group(0) if m else ""
@@ -2642,6 +2663,17 @@ def extrair_campos_administrativos_ocr(texto):
             empresa = re.sub(r"\s+", " ", empresa).strip(" -:|")
             if len(empresa) >= 6:
                 dados["2"] = empresa
+    if not dados.get("2") and cnpj:
+        trecho_empresa = flat[cnpj.end():cnpj.end() + 240]
+        m_empresa_mascara_flex = re.search(
+            r"^\s*([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ0-9\s\.&/-]{5,140}?)\s+-?\d{4}\s*-\s*\d\s*[-/]\s*\d{2}\b",
+            trecho_empresa,
+            flags=re.IGNORECASE,
+        )
+        if m_empresa_mascara_flex:
+            empresa = re.sub(r"\s+", " ", m_empresa_mascara_flex.group(1)).strip(" -:|")
+            if len(empresa) >= 6:
+                dados["2"] = empresa
 
     m_trab = re.search(
         r"\b([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ\s]{5,80})\s+"
@@ -2671,6 +2703,12 @@ def extrair_campos_administrativos_ocr(texto):
                 dados.setdefault("4", nome)
             dados.setdefault("5", m_trab_flex.group(2).upper().replace("N/A", "NA"))
             dados.setdefault("6", m_trab_flex.group(3))
+    if not dados.get("6"):
+        m_documento_flex = re.search(r"\b(?:6\s*[-–:]?\s*)?(?:NIT|CPF)\s*[:\-]?\s*([0-9][0-9.\-\s]{8,20}[0-9])", flat, flags=re.IGNORECASE)
+        if m_documento_flex:
+            digitos = re.sub(r"\D", "", m_documento_flex.group(1))
+            if len(digitos) in {10, 11}:
+                dados["6"] = digitos
 
     m_linha_doc = re.search(
         r"(\d{2}/\d{2}/\d{4}|\d{2}/\d{6})\s+"
@@ -4457,3 +4495,4 @@ if st.button("🚀 Gerar Raio-X do PPP", use_container_width=True):
             mime="text/plain",
             use_container_width=True
         )
+
