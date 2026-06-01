@@ -907,7 +907,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-05-31-soc-v2"
+OCR_PIPELINE_VERSION = "2026-05-31-adaptativo-v4"
 
 
 def extrair_texto_pdf(uploaded_file):
@@ -963,10 +963,10 @@ def extrair_texto_pdf_bytes(pdf_bytes, pipeline_version):
                     texto += "\n" + pytesseract.image_to_string(img, lang="por+eng", config=config)
             imagens_soc = [img for img in imagens if layout_soc_ppp8_compativel(img)]
             if imagens_soc:
-                # O template SOC já possui recortes calibrados. Executar também
-                # as regiões amplas e a grade genérica multiplica chamadas ao
-                # Tesseract sem ganho proporcional e pode estourar recursos no
-                # Streamlit Cloud.
+                # O perfil SOC melhora células críticas, mas a grade dinâmica
+                # continua necessária para variações de posição, escala e
+                # quantidade de linhas entre documentos do mesmo fornecedor.
+                texto += "\n" + ocr_tabelas_grade_ppp(imagens_soc, max_linhas_pagina=65)
                 texto += "\n" + ocr_soc_celulas_ppp(imagens_soc)
             else:
                 texto += "\n" + ocr_regioes_tabeladas_ppp(imagens)
@@ -1075,7 +1075,7 @@ def linha_ocr_dinamica_relevante(linha):
     return False
 
 
-def ocr_tabelas_grade_ppp(imagens):
+def ocr_tabelas_grade_ppp(imagens, max_linhas_pagina=100):
     """
     Fallback geral para PPPs escaneados com tabelas variadas.
     Detecta a grade da própria página e reconstrói linhas por células, sem
@@ -1120,7 +1120,7 @@ def ocr_tabelas_grade_ppp(imagens):
                 continue
             textos.append(f"OCR TABELA DINÂMICA PÁGINA {pagina} | linha {indice}: {linha}")
             linhas_emitidas += 1
-            if linhas_emitidas >= 100:
+            if linhas_emitidas >= max_linhas_pagina:
                 break
     if not textos:
         return ""
@@ -1166,6 +1166,21 @@ def ocr_celula(crop, psm=6):
             texto = pytesseract.image_to_string(img, lang="por+eng", config=config)
         except Exception:
             texto = ""
+    return re.sub(r"\s+", " ", texto or "").strip(" -:|")
+
+
+def ocr_celula_com_whitelist(crop, whitelist, psm=7):
+    if pytesseract is None:
+        return ""
+    try:
+        img = preparar_imagem_ocr_celula(crop)
+    except Exception:
+        img = crop
+    config = f"--psm {psm} -c preserve_interword_spaces=1 -c tessedit_char_whitelist={whitelist}"
+    try:
+        texto = pytesseract.image_to_string(img, config=config)
+    except Exception:
+        texto = ""
     return re.sub(r"\s+", " ", texto or "").strip(" -:|")
 
 
@@ -1329,8 +1344,12 @@ def adicionar_ocr_soc_validado(textos, rejeitados, numero, nome, linha, valor):
     return validado
 
 
-def adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop, psm=6, tentar_alternativo=True):
-    validado, bruto = ocr_celula_soc_validada(crop, numero, psm=psm, tentar_alternativo=tentar_alternativo)
+def adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop, psm=6, tentar_alternativo=True, whitelist=None):
+    if whitelist:
+        bruto = ocr_celula_com_whitelist(crop, whitelist, psm=psm)
+        validado = validar_valor_ocr_soc(numero, bruto)
+    else:
+        validado, bruto = ocr_celula_soc_validada(crop, numero, psm=psm, tentar_alternativo=tentar_alternativo)
     if validado:
         textos.append(f"{numero} - {nome} | linha {linha}: {validado}")
     elif bruto:
@@ -1378,16 +1397,26 @@ def ocr_soc_celulas_ppp(imagens):
         ("14.2", "Descrição das atividades", 1, (0.250, 0.386, 0.915, 0.405), 6),
     ]
     for numero, nome, linha, box, psm in celulas_13_14:
-        adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop_relativo(img, box), psm=psm)
+        whitelist = "0123456789-" if numero in {"13.6", "13.7"} else None
+        adicionar_crop_ocr_soc(
+            textos,
+            rejeitados,
+            numero,
+            nome,
+            linha,
+            crop_relativo(img, box),
+            psm=psm,
+            whitelist=whitelist,
+        )
 
     colunas_15 = [
         ("15.1", "Período", (0.070, 0.000, 0.155, 0.000), 7),
         ("15.2", "Tipo", (0.155, 0.000, 0.215, 0.000), 7),
-        ("15.3", "Fator de risco", (0.205, 0.000, 0.390, 0.000), 6),
+        ("15.3", "Fator de risco", (0.205, 0.000, 0.350, 0.000), 6),
         ("15.4", "Intensidade / concentração", (0.325, 0.000, 0.470, 0.000), 6),
         ("15.5", "Técnica utilizada", (0.470, 0.000, 0.595, 0.000), 6),
         ("15.6", "EPC eficaz", (0.595, 0.000, 0.668, 0.000), 7),
-        ("15.7", "EPI eficaz", (0.668, 0.000, 0.825, 0.000), 7),
+        ("15.7", "EPI eficaz", (0.668, 0.000, 0.745, 0.000), 7),
         ("15.8", "CA do EPI", (0.825, 0.000, 0.920, 0.000), 7),
     ]
     linhas_15 = [
@@ -1421,8 +1450,16 @@ def ocr_soc_celulas_ppp(imagens):
         if all(valores_por_numero.get(numero) for numero in ["15.1", "15.2", "15.3"]):
             textos.append(f"15 - Linha ambiental OCR SOC | linha {linha}: " + " | ".join(valores_linha))
 
-    coluna_agentes = ocr_celula(crop_relativo(img, (0.195, 0.450, 0.405, 0.744)), psm=6)
-    agentes_complementares = extrair_agentes_detectados_campo15(coluna_agentes)
+    faixas_agentes = [
+        (0.195, 0.450, 0.365, 0.635),
+        (0.195, 0.625, 0.365, 0.755),
+    ]
+    agentes_complementares = []
+    for box in faixas_agentes:
+        coluna_agentes = ocr_celula(crop_relativo(img, box), psm=6)
+        for agente in extrair_agentes_detectados_campo15(coluna_agentes):
+            if agente not in agentes_complementares:
+                agentes_complementares.append(agente)
     if agentes_complementares:
         textos.append("\n=== AGENTES CAMPO 15 OCR SOC COMPLEMENTARES ===")
         for agente in agentes_complementares:
@@ -1439,13 +1476,14 @@ def ocr_soc_celulas_ppp(imagens):
         adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop_relativo(img, box), psm=psm)
 
     celulas_16 = [
-        ("16.1", "Período responsável técnico", 1, (0.090, 0.876, 0.230, 0.895), 7),
-        ("16.2", "NIT/CPF do responsável", 1, (0.230, 0.876, 0.485, 0.895), 7),
-        ("16.3", "Registro conselho de classe", 1, (0.485, 0.876, 0.685, 0.895), 7),
-        ("16.4", "Nome do profissional legalmente habilitado", 1, (0.685, 0.876, 0.920, 0.895), 6),
+        ("16.1", "Período responsável técnico", 1, (0.090, 0.884, 0.230, 0.899), 7),
+        ("16.2", "NIT/CPF do responsável", 1, (0.230, 0.884, 0.485, 0.899), 7),
+        ("16.3", "Registro conselho de classe", 1, (0.485, 0.884, 0.685, 0.899), 7),
+        ("16.4", "Nome do profissional legalmente habilitado", 1, (0.685, 0.884, 0.920, 0.899), 7),
     ]
     for numero, nome, linha, box, psm in celulas_16:
-        adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop_relativo(img, box), psm=psm)
+        whitelist = "0123456789.-" if numero == "16.2" else None
+        adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop_relativo(img, box), psm=psm, whitelist=whitelist)
 
     if rejeitados:
         textos.append(f"\n=== LEITURAS OCR SOC REJEITADAS: {len(rejeitados)} ===")
@@ -1556,7 +1594,11 @@ def limpar_valor_campo_escalar(numero, valor):
             valor = ""
     elif numero == "9":
         m = re.search(r"\b\d{3,}/\d{2,}(?:\s*[-/]\s*[A-Z]{2})?\b", valor, flags=re.IGNORECASE)
-        valor = re.sub(r"/([A-Z]{2})$", r" - \1", m.group(0).strip()) if m else ""
+        if m:
+            valor = re.sub(r"/([A-Z]{2})$", r" - \1", m.group(0).strip())
+        else:
+            matricula = re.search(r"\b(?=[A-Z0-9]{1,30}\b)(?=[A-Z0-9]*\d)[A-Z0-9]{1,30}\b", valor, flags=re.IGNORECASE)
+            valor = matricula.group(0) if matricula else ""
     elif numero == "10":
         m = re.search(r"\b\d{2}/\d{2}/\d{4}\b|\b\d{2}/\d{6}\b", valor)
         valor = normalizar_data_ocr(m.group(0)) if m else valor
@@ -2993,6 +3035,17 @@ def extrair_campos_administrativos_ocr(texto):
         )
         if m_ctps:
             dados["9"] = m_ctps.group(1)
+    if not dados.get("9"):
+        m_esocial_deslocado = re.search(
+            r"\b(?:Masculino|Feminino|M|F)\b.{0,180}?\b([A-Z0-9]{1,24})\s+"
+            r"(\d{2}/\d{2}/\d{4})\s+(NA|N/?A|N[aã\?]o\s+aplic\S*vel)\b",
+            flat,
+            flags=re.IGNORECASE,
+        )
+        if m_esocial_deslocado:
+            dados["9"] = m_esocial_deslocado.group(1)
+            dados.setdefault("10", m_esocial_deslocado.group(2))
+            dados.setdefault("11", m_esocial_deslocado.group(3).upper().replace("N/A", "NA"))
     if not dados.get("10"):
         admissao = extrair_data_admissao(bloco)
         if admissao:
@@ -3018,6 +3071,15 @@ def extrair_campos_administrativos_ocr(texto):
 
     for chave in list(dados):
         dados[chave] = limpar_valor_campo_escalar(chave, dados[chave])
+    if not dados.get("9"):
+        m_esocial_deslocado = re.search(
+            r"\b(?:Masculino|Feminino|M|F)\b.{0,180}?\b([A-Z0-9]{1,24})\s+"
+            r"(\d{2}/\d{2}/\d{4})\s+(NA|N/?A|N[aã\?]o\s+aplic\S*vel)\b",
+            flat,
+            flags=re.IGNORECASE,
+        )
+        if m_esocial_deslocado:
+            dados["9"] = limpar_valor_campo_escalar("9", m_esocial_deslocado.group(1))
     if not dados.get("9"):
         for m_ctps_numerica in re.finditer(r"\b\d{3,}\s*/\s*\d{2,}(?:\s*-\s*[A-Z]{2})?\b", bloco, flags=re.IGNORECASE):
             if m_ctps_numerica.start() > 0 and bloco[m_ctps_numerica.start() - 1] in ".0123456789":
