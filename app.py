@@ -901,13 +901,18 @@ AGENTES.update({
 def normalizar(texto):
     if not texto:
         return ""
-    texto = texto.lower()
+    texto = str(texto).translate(str.maketrans({
+        "А": "A", "В": "B", "С": "C", "Е": "E", "Н": "H", "І": "I",
+        "К": "K", "М": "M", "О": "O", "Р": "P", "Т": "T", "Х": "X",
+        "а": "a", "в": "b", "с": "c", "е": "e", "н": "h", "і": "i",
+        "к": "k", "м": "m", "о": "o", "р": "p", "т": "t", "х": "x",
+    })).lower()
     texto = unicodedata.normalize("NFD", texto)
     texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-06-01-adaptativo-v7"
+OCR_PIPELINE_VERSION = "2026-06-01-adaptativo-v8"
 
 
 def extrair_texto_pdf(uploaded_file):
@@ -2489,6 +2494,8 @@ def agrupar_linhas_por_inicio_estrutural(linhas, tipo):
         limpa = re.sub(r"\s+", " ", str(linha or "")).strip()
         if not limpa:
             continue
+        if re.fullmatch(r"[-\s]*(?:p[aá]gina|page)\s*\d+[-\s]*", limpa, flags=re.IGNORECASE):
+            continue
         if tipo == "15" and re.fullmatch(r"\(?\d{2}/\d{2}/\d{4}\s*a?\)?", limpa, flags=re.IGNORECASE):
             if atual:
                 atual = f"{atual} {limpa}".strip()
@@ -3533,7 +3540,8 @@ def extrair_linhas_13_matriciais(texto):
         ["registros ambientais", "15 - exposição", "15 exposicao", "15 -", "15.1"],
     )
     texto_bloco = "\n".join(bloco or [])
-    if len(re.findall(r"13\.2\s*[-–:]?\s*(?:CNPJ|N[ºo]\s*CNPJ)", texto_bloco, flags=re.IGNORECASE)) < 2:
+    texto_bloco_norm = normalizar(texto_bloco)
+    if len(re.findall(r"13\.2\b", texto_bloco_norm)) < 2:
         return {}
 
     pos_14 = re.search(r"\b14\s*[-–]\s*Profissiografia\b", texto_bloco, flags=re.IGNORECASE)
@@ -3545,10 +3553,10 @@ def extrair_linhas_13_matriciais(texto):
             periodos.append(periodo)
 
     linhas_bloco = [re.sub(r"\s+", " ", linha).strip() for linha in bloco if linha.strip()]
-    indices_cnpj = [
-        idx for idx, linha in enumerate(linhas_bloco)
-        if re.fullmatch(r"\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}", linha)
-    ]
+    indices_cnpj = []
+    for idx, linha in enumerate(linhas_bloco):
+        if re.fullmatch(r"\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}", linha):
+            indices_cnpj.append(idx)
     if len(periodos) < 2 or len(indices_cnpj) < 2:
         return {}
 
@@ -3557,7 +3565,7 @@ def extrair_linhas_13_matriciais(texto):
         fim = indices_cnpj[numero] if numero < len(indices_cnpj) else len(linhas_bloco)
         valores = [
             valor for valor in linhas_bloco[inicio + 1:fim]
-            if not re.search(r"^(?:13|14)(?:\.\d+)?\s*[-–:]|descri[cç][aã]o\s+atividades", valor, flags=re.IGNORECASE)
+            if not re.search(r"^(?:13|14)(?:\.\d+)?\s*[-–:]|descricao\s+atividades", normalizar(valor), flags=re.IGNORECASE)
         ]
         pos_cbo = next(
             (idx for idx, valor in enumerate(valores) if re.fullmatch(r"\d{4,6}(?:-\d{1,2})?", valor)),
@@ -3577,6 +3585,9 @@ def extrair_linhas_13_matriciais(texto):
         if len(atribuicoes) >= 2:
             dados["13.5"] = atribuicoes[1]
         elif any(valor in {"-", "—", "NA", "N/A"} for valor in valores[1:pos_cbo]):
+            dados["13.5"] = "NA"
+        elif len(re.findall(r"13\.5\b", texto_bloco_norm)) >= len(indices_cnpj):
+            # A coluna existe na matriz, mas não há token entre cargo e CBO.
             dados["13.5"] = "NA"
         dados["13.6"] = normalizar_cbo_ocr(valores[pos_cbo])
         for valor in valores[pos_cbo + 1:]:
@@ -3949,16 +3960,9 @@ def extrair_linhas_15_ocr(texto):
 
     linhas = suplementar_linhas_15_por_agentes(bloco, linhas)
     if linhas:
-        texto_bloco = "\n".join(bloco)
         for idx, dados in linhas.items():
             inicio = dados.get("_linha_original", "")
             contexto = inicio
-            bloco_linhas = [re.sub(r"\s+", " ", l).strip() for l in bloco if l.strip()]
-            try:
-                pos = bloco_linhas.index(inicio)
-                contexto = " ".join(bloco_linhas[pos:pos + 5])
-            except Exception:
-                contexto = inicio if dados.get("_linha_suplementar") else " ".join(bloco_linhas[:8])
 
             if not dados.get("15.4"):
                 intensidade = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?|\b\d+(?:[,.]\d+)?\s*(?:ppm|mg/m[³3])\b|\b(?:qualitativ[ao]|quantitativ[ao]|ND)\b", contexto, flags=re.IGNORECASE)
@@ -4045,6 +4049,8 @@ def extrair_linhas_15_ocr(texto):
                 dados["15.7"] = respostas[1]
             normalizar_linha_15(dados)
             linhas[idx] = dados
+    for dados in linhas.values():
+        normalizar_linha_15(dados)
     return deduplicar_linhas_dict(linhas, ["15.1", "15.2", "15.3", "15.4", "15.5", "15.6", "15.7", "15.8"])
 
 
@@ -4052,6 +4058,7 @@ def montar_linhas_compostas(texto, campo):
     subcampos = campo.get("subcampos", [])
     numeros = [s[0] for s in subcampos]
     manuais = linhas_manuais_por_campo(texto, numeros)
+    bloquear_fallback_16_isolado = False
 
     if campo["numero"] == "13":
         for idx, dados in extrair_linhas_13_ocr(texto).items():
@@ -4081,6 +4088,17 @@ def montar_linhas_compostas(texto, campo):
             manuais[idx].setdefault("16.2", resp.get("cpf", ""))
             manuais[idx].setdefault("16.3", resp.get("registro", ""))
             manuais[idx].setdefault("16.4", resp.get("nome", ""))
+        for idx in list(manuais):
+            chaves_16 = [
+                chave for chave, valor in manuais[idx].items()
+                if chave.startswith("16.") and valor and not valor_ausente_estrutural(valor)
+            ]
+            if chaves_16 == ["16.3"]:
+                # Registro isolado é candidato frágil: pode ser ruído OCR ou
+                # pertencer a outra região. Mantém placeholder até haver linha
+                # lógica com período, documento ou nome.
+                manuais.pop(idx)
+                bloquear_fallback_16_isolado = True
 
     if campo["numero"] == "15":
         for idx, dados in extrair_linhas_15_ocr(texto).items():
@@ -4224,7 +4242,10 @@ def montar_linhas_compostas(texto, campo):
         subdados = {}
         incompletos = []
         for numero, nome in subcampos:
-            valor = dados.get(numero) or valor_manual_campo_linha(texto, numero, idx)
+            valor = dados.get(numero) or (
+                "" if bloquear_fallback_16_isolado and campo["numero"] == "16"
+                else valor_manual_campo_linha(texto, numero, idx)
+            )
             if not valor and numero == "15.9":
                 valor = "ver subitens" if any(dados.get(n) for n, _ in subcampos if n.startswith("15.9 [")) else ""
             subdados[numero] = {"nome": nome, "valor": valor}
