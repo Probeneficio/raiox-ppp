@@ -907,7 +907,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-05-31-adaptativo-v4"
+OCR_PIPELINE_VERSION = "2026-05-31-adaptativo-v6"
 
 
 def extrair_texto_pdf(uploaded_file):
@@ -1466,20 +1466,20 @@ def ocr_soc_celulas_ppp(imagens):
             textos.append(f"AGENTE CAMPO 15 SOC: {agente}")
 
     celulas_159 = [
-        ("15.9 [01]", "Medidas coletivas/administrativas antes do EPI", 1, (0.835, 0.753, 0.920, 0.776), 7),
-        ("15.9 [02]", "Funcionamento e uso ininterrupto do EPI", 1, (0.835, 0.776, 0.920, 0.801), 7),
-        ("15.9 [03]", "Prazo de validade/CA", 1, (0.835, 0.801, 0.920, 0.819), 7),
-        ("15.9 [04]", "Periodicidade de troca", 1, (0.835, 0.819, 0.920, 0.840), 7),
-        ("15.9 [05]", "Higienização", 1, (0.835, 0.840, 0.920, 0.855), 7),
+        ("15.9 [01]", "Medidas coletivas/administrativas antes do EPI", 1, (0.825, 0.758, 0.925, 0.783), 7),
+        ("15.9 [02]", "Funcionamento e uso ininterrupto do EPI", 1, (0.825, 0.783, 0.925, 0.812), 7),
+        ("15.9 [03]", "Prazo de validade/CA", 1, (0.825, 0.811, 0.925, 0.827), 7),
+        ("15.9 [04]", "Periodicidade de troca", 1, (0.825, 0.826, 0.925, 0.846), 7),
+        ("15.9 [05]", "Higienização", 1, (0.825, 0.842, 0.925, 0.860), 7),
     ]
     for numero, nome, linha, box, psm in celulas_159:
         adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop_relativo(img, box), psm=psm)
 
     celulas_16 = [
-        ("16.1", "Período responsável técnico", 1, (0.090, 0.884, 0.230, 0.899), 7),
-        ("16.2", "NIT/CPF do responsável", 1, (0.230, 0.884, 0.485, 0.899), 7),
-        ("16.3", "Registro conselho de classe", 1, (0.485, 0.884, 0.685, 0.899), 7),
-        ("16.4", "Nome do profissional legalmente habilitado", 1, (0.685, 0.884, 0.920, 0.899), 7),
+        ("16.1", "Período responsável técnico", 1, (0.090, 0.895, 0.230, 0.913), 7),
+        ("16.2", "NIT/CPF do responsável", 1, (0.230, 0.895, 0.485, 0.913), 7),
+        ("16.3", "Registro conselho de classe", 1, (0.485, 0.895, 0.685, 0.913), 7),
+        ("16.4", "Nome do profissional legalmente habilitado", 1, (0.685, 0.895, 0.920, 0.913), 7),
     ]
     for numero, nome, linha, box, psm in celulas_16:
         whitelist = "0123456789.-" if numero == "16.2" else None
@@ -3240,7 +3240,11 @@ def preencher_por_ordem(dados, chaves, valores):
     Não sobrescreve valores já extraídos por rótulo/contexto.
     """
     for chave, valor in zip(chaves, valores):
-        valor = re.sub(r"\s+", " ", str(valor or "")).strip(" -:|")
+        bruto = re.sub(r"\s+", " ", str(valor or "")).strip()
+        if bruto in {"-", "—"} and chave in {"13.5", "13.7", "15.4", "15.5", "15.6", "15.7", "15.8"}:
+            valor = "NA"
+        else:
+            valor = bruto.strip(" -:|")
         if valor and not dados.get(chave):
             dados[chave] = valor
     return dados
@@ -3478,6 +3482,72 @@ def extrair_subcampos_13_rotulados(bloco):
     return encontrados
 
 
+def extrair_linhas_13_matriciais(texto):
+    """
+    Reconstrói layouts em que o extrator entrega primeiro os rótulos da grade
+    e, depois, os valores de cada linha. O padrão aparece em PPPs rurais e não
+    depende da coordenada física da tabela.
+    """
+    bloco = bloco_tabela_por_termos(
+        texto,
+        ["13 - lotação", "13 lotação", "lotação e atribuição", "lotacao e atribuicao"],
+        ["registros ambientais", "15 - exposição", "15 exposicao", "15 -", "15.1"],
+    )
+    texto_bloco = "\n".join(bloco or [])
+    if len(re.findall(r"13\.2\s*[-–:]?\s*(?:CNPJ|N[ºo]\s*CNPJ)", texto_bloco, flags=re.IGNORECASE)) < 2:
+        return {}
+
+    pos_14 = re.search(r"\b14\s*[-–]\s*Profissiografia\b", texto_bloco, flags=re.IGNORECASE)
+    texto_periodos = texto_bloco[:pos_14.start()] if pos_14 else texto_bloco
+    periodos = []
+    for periodo in re.findall(periodo_ppp_regex(), texto_periodos, flags=re.IGNORECASE):
+        periodo = re.sub(r"\s+", " ", periodo).strip()
+        if periodo not in periodos:
+            periodos.append(periodo)
+
+    linhas_bloco = [re.sub(r"\s+", " ", linha).strip() for linha in bloco if linha.strip()]
+    indices_cnpj = [
+        idx for idx, linha in enumerate(linhas_bloco)
+        if re.fullmatch(r"\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}", linha)
+    ]
+    if len(periodos) < 2 or len(indices_cnpj) < 2:
+        return {}
+
+    resultado = {}
+    for numero, inicio in enumerate(indices_cnpj, start=1):
+        fim = indices_cnpj[numero] if numero < len(indices_cnpj) else len(linhas_bloco)
+        valores = [
+            valor for valor in linhas_bloco[inicio + 1:fim]
+            if not re.search(r"^(?:13|14)(?:\.\d+)?\s*[-–:]|descri[cç][aã]o\s+atividades", valor, flags=re.IGNORECASE)
+        ]
+        pos_cbo = next(
+            (idx for idx, valor in enumerate(valores) if re.fullmatch(r"\d{4,6}(?:-\d{1,2})?", valor)),
+            None,
+        )
+        if pos_cbo is None or not valores:
+            continue
+        dados = {
+            "13.1": periodos[numero - 1] if numero <= len(periodos) else "",
+            "13.2": linhas_bloco[inicio],
+            "13.3": valores[0],
+            "_linha_original": " | ".join(linhas_bloco[inicio:fim]),
+        }
+        atribuicoes = [valor for valor in valores[1:pos_cbo] if valor not in {"-", "—"}]
+        if atribuicoes:
+            dados["13.4"] = atribuicoes[0]
+        if len(atribuicoes) >= 2:
+            dados["13.5"] = atribuicoes[1]
+        elif any(valor in {"-", "—", "NA", "N/A"} for valor in valores[1:pos_cbo]):
+            dados["13.5"] = "NA"
+        dados["13.6"] = normalizar_cbo_ocr(valores[pos_cbo])
+        for valor in valores[pos_cbo + 1:]:
+            if re.fullmatch(r"(?:0[0-9]|0515)", valor):
+                dados["13.7"] = valor
+                break
+        resultado[numero] = dados
+    return resultado
+
+
 @st.cache_data(show_spinner=False)
 def extrair_linhas_13_ocr(texto):
     bloco_original = bloco_tabela_por_termos(
@@ -3613,7 +3683,71 @@ def extrair_linhas_13_ocr(texto):
                 m_periodo_14 = re.search(periodo_ppp_regex(), resto_texto, flags=re.IGNORECASE)
             if m_periodo_14:
                 primeiro["13.1"] = m_periodo_14.group(1 if m_periodo_14.lastindex else 0).strip()
+    for idx, dados_matriciais in extrair_linhas_13_matriciais(texto).items():
+        destino = linhas.setdefault(idx, {})
+        for codigo, valor in dados_matriciais.items():
+            if codigo == "_linha_original" or not destino.get(codigo):
+                destino[codigo] = valor
     return deduplicar_linhas_dict(linhas, ["13.1", "13.2", "13.3", "13.4", "13.5", "13.6", "13.7"])
+
+
+def extrair_linhas_14_matriciais(texto):
+    """
+    Recupera períodos e descrições quando o PDF lineariza as duas linhas do
+    Campo 14 antes de apresentar os textos das atividades.
+    """
+    bloco = bloco_tabela_por_termos(
+        texto,
+        ["13 - lotação", "13 lotação", "lotação e atribuição", "lotacao e atribuicao"],
+        ["registros ambientais", "15 - exposição", "15 exposicao", "15 -", "15.1"],
+    )
+    texto_bloco = "\n".join(bloco or [])
+    m_inicio = re.search(r"\b14\s*[-–]\s*Profissiografia\b", texto_bloco, flags=re.IGNORECASE)
+    if not m_inicio:
+        return {}
+    trecho_14 = texto_bloco[m_inicio.start():]
+    periodos = []
+    for periodo in re.findall(periodo_ppp_regex(), trecho_14, flags=re.IGNORECASE):
+        periodo = re.sub(r"\s+", " ", periodo).strip()
+        if periodo not in periodos:
+            periodos.append(periodo)
+    if len(periodos) < 2:
+        return {}
+
+    linhas = [re.sub(r"\s+", " ", linha).strip() for linha in trecho_14.splitlines() if linha.strip()]
+    ultimo_gfip = -1
+    for idx, linha in enumerate(linhas):
+        if re.fullmatch(r"(?:0[0-9]|0515)", linha):
+            ultimo_gfip = idx
+    if ultimo_gfip == -1:
+        return {}
+    narrativa_linhas = linhas[ultimo_gfip + 1:]
+    descricoes = []
+    atual = ""
+    for linha in narrativa_linhas:
+        if atual and re.search(r"[.!?]\s*$", atual) and re.match(r"^[A-ZÁÉÍÓÚÂÊÔÃÕÇ]", linha):
+            descricoes.append(atual)
+            atual = linha
+        else:
+            atual = (atual + " " + linha).strip()
+    if atual:
+        descricoes.append(atual)
+    descricoes = [re.sub(r"\s+", " ", descricao).strip() for descricao in descricoes if len(descricao.strip()) >= 55]
+    if len(descricoes) < len(periodos):
+        sentencas = [
+            re.sub(r"\s+", " ", descricao).strip()
+            for descricao in re.split(r"(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])", " ".join(narrativa_linhas))
+            if len(descricao.strip()) >= 40
+        ]
+        if len(sentencas) >= len(periodos):
+            excesso_primeira = len(sentencas) - len(periodos) + 1
+            descricoes = [" ".join(sentencas[:excesso_primeira])] + sentencas[excesso_primeira:]
+    if len(descricoes) < len(periodos):
+        return {}
+    return {
+        idx: {"14.1": periodo, "14.2": descricoes[idx - 1], "_linha_original": descricoes[idx - 1]}
+        for idx, periodo in enumerate(periodos, start=1)
+    }
 
 
 @st.cache_data(show_spinner=False)
@@ -3645,6 +3779,11 @@ def extrair_linhas_14_ocr(texto):
             pendente = idx
         elif pendente and len(limpa) > 25 and not re.search(r"14\.\d|descri[cç][aã]o|per[ií]odo", limpa, flags=re.IGNORECASE):
             linhas[pendente]["14.2"] = (linhas[pendente].get("14.2", "") + " " + limpa).strip()
+    for idx, dados_matriciais in extrair_linhas_14_matriciais(texto).items():
+        destino = linhas.setdefault(idx, {})
+        for codigo, valor in dados_matriciais.items():
+            if codigo == "_linha_original" or not destino.get(codigo) or codigo == "14.2":
+                destino[codigo] = valor
     return deduplicar_linhas_dict(linhas, ["14.1", "14.2"])
 
 
