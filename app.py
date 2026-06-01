@@ -907,7 +907,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-05-31-adaptativo-v6"
+OCR_PIPELINE_VERSION = "2026-06-01-adaptativo-v7"
 
 
 def extrair_texto_pdf(uploaded_file):
@@ -1357,6 +1357,34 @@ def adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop, psm=6,
     return validado
 
 
+def adicionar_primeiro_crop_ocr_soc(textos, rejeitados, numero, nome, linha, img, boxes, psm=6, whitelist=None):
+    """
+    Tenta pequenas variações do mesmo recorte SOC. A validação semântica do
+    subcampo decide qual leitura pode entrar no texto estruturado.
+    """
+    houve_bruto = False
+    for box in boxes:
+        textos_tentativa = []
+        rejeitados_tentativa = []
+        validado = adicionar_crop_ocr_soc(
+            textos_tentativa,
+            rejeitados_tentativa,
+            numero,
+            nome,
+            linha,
+            crop_relativo(img, box),
+            psm=psm,
+            whitelist=whitelist,
+        )
+        if validado:
+            textos.extend(textos_tentativa)
+            return validado
+        houve_bruto = houve_bruto or bool(rejeitados_tentativa)
+    if houve_bruto:
+        rejeitados.append(f"OCR SOC INVÁLIDO - campo {numero} | linha {linha}: preencher manualmente")
+    return ""
+
+
 def layout_soc_ppp8_compativel(img):
     """
     O perfil abaixo foi calibrado para a folha SOC larga do PPP8.
@@ -1398,16 +1426,12 @@ def ocr_soc_celulas_ppp(imagens):
     ]
     for numero, nome, linha, box, psm in celulas_13_14:
         whitelist = "0123456789-" if numero in {"13.6", "13.7"} else None
-        adicionar_crop_ocr_soc(
-            textos,
-            rejeitados,
-            numero,
-            nome,
-            linha,
-            crop_relativo(img, box),
-            psm=psm,
-            whitelist=whitelist,
-        )
+        boxes = [box]
+        if numero == "13.6":
+            boxes.append((0.400, 0.338, 0.920, 0.358))
+        elif numero == "13.7":
+            boxes.append((0.400, 0.349, 0.920, 0.370))
+        adicionar_primeiro_crop_ocr_soc(textos, rejeitados, numero, nome, linha, img, boxes, psm=psm, whitelist=whitelist)
 
     colunas_15 = [
         ("15.1", "Período", (0.070, 0.000, 0.155, 0.000), 7),
@@ -1483,7 +1507,13 @@ def ocr_soc_celulas_ppp(imagens):
     ]
     for numero, nome, linha, box, psm in celulas_16:
         whitelist = "0123456789.-" if numero == "16.2" else None
-        adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop_relativo(img, box), psm=psm, whitelist=whitelist)
+        x1, y1, x2, y2 = box
+        boxes = [
+            box,
+            (max(0, x1 - 0.008), y1 - 0.012, min(1, x2 + 0.008), y2 + 0.004),
+            (max(0, x1 - 0.012), y1 - 0.020, min(1, x2 + 0.012), y2 + 0.008),
+        ]
+        adicionar_primeiro_crop_ocr_soc(textos, rejeitados, numero, nome, linha, img, boxes, psm=psm, whitelist=whitelist)
 
     if rejeitados:
         textos.append(f"\n=== LEITURAS OCR SOC REJEITADAS: {len(rejeitados)} ===")
@@ -3290,6 +3320,15 @@ def normalizar_linha_15(dados):
     for chave in ["15.4", "15.5", "15.6", "15.7", "15.8"]:
         if valor_nao_aplicavel_estrutural(dados.get(chave, "")):
             dados[chave] = "NA"
+    if (
+        not dados.get("15.6")
+        and dados.get("15.7") == "NA"
+        and dados.get("15.8") == "NA"
+    ):
+        # Alguns PDFs textuais descartam apenas o primeiro hífen da sequência
+        # EPC/EPI/CA. A presença estrutural dos dois NA seguintes permite
+        # preservar o sentido da célula sem inventar resposta positiva.
+        dados["15.6"] = "NA"
 
     if dados.get("15.4"):
         m = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?(?:\s*NEN)?", dados["15.4"], flags=re.IGNORECASE)
@@ -3686,7 +3725,7 @@ def extrair_linhas_13_ocr(texto):
     for idx, dados_matriciais in extrair_linhas_13_matriciais(texto).items():
         destino = linhas.setdefault(idx, {})
         for codigo, valor in dados_matriciais.items():
-            if codigo == "_linha_original" or not destino.get(codigo):
+            if codigo == "_linha_original" or codigo.startswith("13.") or not destino.get(codigo):
                 destino[codigo] = valor
     return deduplicar_linhas_dict(linhas, ["13.1", "13.2", "13.3", "13.4", "13.5", "13.6", "13.7"])
 
