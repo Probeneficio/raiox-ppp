@@ -2,6 +2,9 @@ import streamlit as st
 import re
 import unicodedata
 import requests
+import hashlib
+import os
+import pprint
 from datetime import datetime
 from io import BytesIO
 
@@ -912,7 +915,36 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-06-01-adaptativo-v8"
+OCR_PIPELINE_VERSION = "2026-06-01-adaptativo-v9-diagnostico"
+MARCADOR_METADADOS_OCR = "=== METADADOS INTERNOS DA EXTRAÇÃO OCR ==="
+MARCADOR_DIAGNOSTICO_INTERNO = "=== DIAGNÓSTICO INTERNO DO PIPELINE ==="
+
+
+def remover_bloco_a_partir_do_marcador(texto, marcador):
+    texto = texto or ""
+    if marcador in texto:
+        return texto.split(marcador, 1)[0].rstrip()
+    return texto
+
+
+def extrair_metadados_ocr(texto):
+    texto = texto or ""
+    if MARCADOR_METADADOS_OCR not in texto:
+        return texto, {}
+    antes, depois = texto.split(MARCADOR_METADADOS_OCR, 1)
+    metadados = {}
+    for linha in depois.splitlines():
+        if ":" not in linha:
+            continue
+        chave, valor = linha.split(":", 1)
+        metadados[chave.strip()] = valor.strip()
+    return antes.rstrip(), metadados
+
+
+def texto_para_analise_sem_diagnostico(texto):
+    texto = remover_bloco_a_partir_do_marcador(texto, MARCADOR_DIAGNOSTICO_INTERNO)
+    texto, _ = extrair_metadados_ocr(texto)
+    return texto.rstrip()
 
 
 def extrair_texto_pdf(uploaded_file):
@@ -979,7 +1011,12 @@ def extrair_texto_pdf_bytes(pdf_bytes, pipeline_version):
         except Exception as e:
             texto += f"\n[OCR não executado ou falhou: {e}]\n"
 
-    return texto
+    metadados = (
+        f"\n\n{MARCADOR_METADADOS_OCR}\n"
+        f"pipeline_version: {pipeline_version}\n"
+        f"extraida_em: {datetime.now().isoformat(timespec='seconds')}\n"
+    )
+    return texto + metadados
 
 
 def ocr_regioes_tabeladas_ppp(imagens):
@@ -4370,6 +4407,7 @@ def valor_ausente_estrutural(valor):
 
 @st.cache_data(show_spinner=False)
 def analisar_campos(texto):
+    texto = texto_para_analise_sem_diagnostico(texto)
     texto = limpar_placeholders_manuais_vazios(texto)
     return [campo_estruturado_para_resultado(campo, texto) for campo in PPP_CAMPOS_ESTRUTURADOS]
 
@@ -4673,6 +4711,7 @@ def coletar_base_legal_utilizada(falhas, agentes, epi, ltcat):
 
 @st.cache_data(show_spinner=False)
 def gerar_parecer(texto, trf):
+    texto = texto_para_analise_sem_diagnostico(texto)
     texto = limpar_placeholders_manuais_vazios(texto)
     datas = extrair_datas(texto)
     cnae = extrair_cnae(texto)
@@ -5046,13 +5085,174 @@ def deve_gerar_placeholder_subcampo(texto, campo, linha, numero, dados):
     return True
 
 
+def formatar_diagnostico(objeto, limite=2600):
+    texto = pprint.pformat(objeto, width=120, compact=True, sort_dicts=True)
+    if len(texto) <= limite:
+        return texto
+    return texto[:limite].rstrip() + "\n... [diagnóstico truncado]"
+
+
+def metadados_app_em_execucao():
+    caminho = os.path.abspath(__file__)
+    try:
+        with open(caminho, "rb") as arquivo:
+            hash_curto = hashlib.sha256(arquivo.read()).hexdigest()[:12]
+        timestamp = datetime.fromtimestamp(os.path.getmtime(caminho)).isoformat(timespec="seconds")
+    except Exception as e:
+        hash_curto = f"indisponível: {e}"
+        timestamp = "indisponível"
+    return caminho, timestamp, hash_curto
+
+
+def status_cache_ocr(metadados):
+    extraida_em = metadados.get("extraida_em", "")
+    if not extraida_em:
+        return "NÃO DETERMINÁVEL: texto manual ou metadados de extração ausentes"
+    try:
+        idade = abs((datetime.now() - datetime.fromisoformat(extraida_em)).total_seconds())
+    except ValueError:
+        return f"NÃO DETERMINÁVEL: timestamp OCR inválido ({extraida_em})"
+    if idade <= 5:
+        return f"NOVA EXTRAÇÃO PROVÁVEL: gerada em {extraida_em}"
+    return f"CACHE REAPROVEITADO PROVÁVEL: extração original gerada em {extraida_em}"
+
+
+def candidatos_diagnostico_placeholder(texto, numero):
+    padroes = {
+        "13.6": r"\b\d{4}(?:-\d{2}|\d{2})\b",
+        "13.7": r"\b(?:00|01|04|05|06)\b",
+        "15.6": r"(?im)(?:^|\|)\s*(?:-|NA|N/A|NÃO|SIM)\s*(?:\||$)",
+        "15.7": r"(?im)(?:^|\|)\s*(?:-|NA|N/A|NÃO|SIM)\s*(?:\||$)",
+        "15.8": r"(?im)(?:^|\|)\s*(?:-|NA|N/A|\d{2,6})\s*(?:\||$)",
+        "16.1": r"\b\d{2}/\d{2}/\d{4}\s+a(?:tual|\s+\d{2}/\d{2}/\d{4})?\b",
+        "16.2": r"\b(?:\d{3}\.\d{3}\.\d{3}-\d{2}|\d{10,11})\b",
+        "16.3": r"\b(?:CRM|CREA|COREN|CRQ|MTE)?\s*\.?\s*\d{2,10}(?:[-/]?[A-Z]{2})?\b",
+        "17": r"\b\d{2}/\d{2}/\d{4}\b",
+        "18.1": r"\b(?:\d{3}\.\d{3}\.\d{3}-\d{2}|\d{11})\b",
+    }
+    padrao = padroes.get(numero)
+    if not padrao:
+        return []
+    encontrados = []
+    for candidato in re.findall(padrao, texto or "", flags=re.IGNORECASE):
+        valor = candidato if isinstance(candidato, str) else "".join(candidato)
+        valor = valor.strip()
+        if valor and valor not in encontrados:
+            encontrados.append(valor)
+    return encontrados[:8]
+
+
+def subcampo_estruturado_no_resultado(campos, numero, indice_linha):
+    for campo in campos:
+        for linha in campo.get("linhas", []):
+            if indice_linha is not None and linha.get("linha") != indice_linha:
+                continue
+            valor = linha.get("subcampos", {}).get(numero, {}).get("valor", "")
+            if not valor_ausente_estrutural(valor):
+                return valor
+    return ""
+
+
+def diagnosticar_placeholders(texto, campos, faltantes):
+    diagnosticos = []
+    for placeholder in faltantes:
+        m = re.match(
+            r"^\s*(\d+(?:\.\d+)?(?:\s*\[\d+\])?)\s*-\s*(.*?)(?:\s*\|\s*linha\s*(\d+))?\s*:\s*$",
+            placeholder,
+            flags=re.IGNORECASE,
+        )
+        if not m:
+            diagnosticos.append({"placeholder": placeholder, "motivo": "Formato de placeholder não reconhecido."})
+            continue
+        numero = m.group(1).strip()
+        indice_linha = int(m.group(3)) if m.group(3) else None
+        candidatos = candidatos_diagnostico_placeholder(texto, numero)
+        estruturado = subcampo_estruturado_no_resultado(campos, numero, indice_linha)
+        validacao = "N/A"
+        motivo = "OCR e parser não localizaram candidato compatível."
+        if candidatos:
+            validacao = "PENDENTE: candidato deve ser confirmado na região lógica do campo"
+            motivo = "Há candidato no texto, mas ele ainda não foi associado à linha estrutural correta."
+        if numero == "16.3" and candidatos and not estruturado:
+            validacao = "REJEITAR se isolado: exige coerência com período, CPF/NIT e nome dentro do bloco 16"
+            motivo = "Registro de conselho isolado não pode preencher o Campo 16."
+        diagnosticos.append({
+            "campo": numero,
+            "linha": indice_linha,
+            "candidatos_no_texto": candidatos or "nenhum",
+            "OCR_encontrou": "SIM" if candidatos else "NÃO",
+            "parser_estruturou": estruturado or "NÃO",
+            "validacao": validacao,
+            "placeholder": "SIM",
+            "motivo": motivo,
+        })
+    return diagnosticos
+
+
+def gerar_bloco_diagnostico_interno(texto_analise, campos, faltantes, metadados_ocr):
+    caminho, timestamp, hash_curto = metadados_app_em_execucao()
+    campos_resumo = [
+        {
+            "campo": campo.get("numero"),
+            "status": campo.get("status"),
+            "linhas": campo.get("linhas", []),
+        }
+        for campo in campos
+    ]
+    compostos = {}
+    for campo in PPP_CAMPOS_ESTRUTURADOS:
+        if campo.get("numero") in {"13", "14", "15", "16", "18", "20"}:
+            compostos[campo["numero"]] = montar_linhas_compostas(texto_analise, campo)
+    secoes = [
+        MARCADOR_DIAGNOSTICO_INTERNO,
+        f"OCR_PIPELINE_VERSION: {OCR_PIPELINE_VERSION}",
+        f"app.py em execução: {caminho}",
+        f"app.py timestamp: {timestamp}",
+        f"app.py sha256 curto: {hash_curto}",
+        f"cache OCR: {status_cache_ocr(metadados_ocr)}",
+        "",
+        "--- preparar_texto_editavel ---",
+        formatar_diagnostico({
+            "tamanho_texto_analise": len(texto_analise),
+            "quantidade_placeholders": len(faltantes),
+            "metadados_ocr": metadados_ocr or "ausentes",
+        }),
+        "",
+        "--- analisar_campos ---",
+        formatar_diagnostico(campos_resumo),
+        "",
+        "--- extrair_linhas_13_matriciais ---",
+        formatar_diagnostico(extrair_linhas_13_matriciais(texto_analise)),
+        "",
+        "--- extrair_linhas_14_matriciais ---",
+        formatar_diagnostico(extrair_linhas_14_matriciais(texto_analise)),
+        "",
+        "--- extrair_linhas_15_ocr ---",
+        formatar_diagnostico(extrair_linhas_15_ocr(texto_analise)),
+        "",
+        "--- extrair_responsaveis_ambientais_linhas ---",
+        formatar_diagnostico(extrair_responsaveis_ambientais_linhas(texto_analise)),
+        "",
+        "--- montar_linhas_compostas ---",
+        formatar_diagnostico(compostos),
+        "",
+        "--- gerar_placeholders ---",
+        formatar_diagnostico(faltantes),
+        "",
+        "--- diagnóstico por campo não lido ---",
+        formatar_diagnostico(diagnosticar_placeholders(texto_analise, campos, faltantes), limite=5200),
+    ]
+    return "\n".join(secoes).rstrip() + "\n"
+
+
 def preparar_texto_editavel(texto):
     """
     Acrescenta ao fim do texto extraído um bloco com qualquer campo analisado
     que não tenha sido lido com valor suficiente. O usuário pode preencher
     manualmente e clicar de novo em Gerar Raio-X do PPP.
     """
-    texto = texto or ""
+    texto = remover_bloco_a_partir_do_marcador(texto or "", MARCADOR_DIAGNOSTICO_INTERNO)
+    texto, metadados_ocr = extrair_metadados_ocr(texto)
     texto_base, manuais_preenchidos = _linhas_manuais_preenchidas_do_bloco(texto)
     texto_analise = limpar_placeholders_manuais_vazios(texto)
 
@@ -5077,18 +5277,17 @@ def preparar_texto_editavel(texto):
             linhas_bloco.append(linha)
             vistos.add(chave)
 
-    if not linhas_bloco:
-        return texto_base
-
-    bloco = (
-        "\n\n"
-        f"{MARCADOR_CAMPOS_MANUAIS}\n"
-        "Preencha somente os campos que conseguir confirmar no PPP original. Depois clique novamente em GERAR RAIO-X DO PPP.\n\n"
-        + "\n".join(linhas_bloco)
-        + "\n"
-    )
-
-    return texto_base.rstrip() + bloco
+    bloco = ""
+    if linhas_bloco:
+        bloco = (
+            "\n\n"
+            f"{MARCADOR_CAMPOS_MANUAIS}\n"
+            "Preencha somente os campos que conseguir confirmar no PPP original. Depois clique novamente em GERAR RAIO-X DO PPP.\n\n"
+            + "\n".join(linhas_bloco)
+            + "\n"
+        )
+    diagnostico = gerar_bloco_diagnostico_interno(texto_analise, campos, faltantes, metadados_ocr)
+    return texto_base.rstrip() + bloco + "\n\n" + diagnostico
 
 
 # ============================================================
@@ -5126,7 +5325,8 @@ if st.button("🚀 Gerar Raio-X do PPP", use_container_width=True):
     if not texto_final.strip():
         st.error("Envie um PDF ou cole o texto do PPP.")
     else:
-        relatorio, campos, agentes, epi, ltcat, classificacao = gerar_parecer(texto_final, trf)
+        texto_para_analise = texto_para_analise_sem_diagnostico(texto_final)
+        relatorio, campos, agentes, epi, ltcat, classificacao = gerar_parecer(texto_para_analise, trf)
 
         st.divider()
         st.header("📋 Resultado Executivo")
