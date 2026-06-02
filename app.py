@@ -227,39 +227,6 @@ BASE_LEGAL = {
             "A eficácia do EPI deve ser comprovada de forma concreta."
         )
     },
-    "fumos_metalicos": {
-        "grupo": "Químico",
-        "termos": [
-            "fumos metalicos", "fumos metálicos", "fumo metalico", "fumo metálico",
-            "ferro", "manganes", "manganês", "silicio", "silício", "solda", "soldagem"
-        ],
-        "norma": "NR-15 Anexos 11, 12 e 13, conforme substância",
-        "limite": "Avaliação conforme substância: quantitativa quando houver limite de tolerância; qualitativa quando aplicável",
-        "metodologia": "LTCAT/laudo técnico com identificação da substância, forma de contato e metodologia de avaliação",
-        "fundamento": (
-            "NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos; Anexo 13 trata de agentes qualitativos. "
-            "Para agentes químicos, a simples indicação de EPI eficaz no PPP não encerra a análise previdenciária."
-        )
-    },
-    "poeiras": {
-        "grupo": "Químico",
-        "termos": ["poeira respiravel", "poeira respirável", "poeira total", "poeiras", "poeira"],
-        "norma": "NR-15 Anexo 12 e normas técnicas aplicáveis",
-        "limite": "Avaliação conforme composição da poeira e eventual presença de sílica",
-        "metodologia": "Amostragem ambiental, fração respirável/total e metodologia compatível",
-        "fundamento": "NR-15, Anexo 12: poeiras minerais exigem avaliação conforme composição, concentração e metodologia."
-    },
-    "oleos_minerais": {
-        "grupo": "Químico",
-        "termos": [
-            "oleos minerais", "óleos minerais", "oleo mineral", "óleo mineral",
-            "hidrocarboneto", "hidrocarbonetos", "graxa", "lubrificante"
-        ],
-        "norma": "NR-15 Anexo 13",
-        "limite": "Avaliação qualitativa quando caracterizado contato habitual e permanente",
-        "metodologia": "Laudo qualitativo com descrição da forma de contato e habitualidade",
-        "fundamento": "NR-15, Anexo 13: óleos minerais e hidrocarbonetos podem exigir análise qualitativa da exposição habitual."
-    },
     "biologicos": {
         "nr15_14": (
             "NR-15, Anexo 14: agentes biológicos são avaliados qualitativamente, considerando risco de contato "
@@ -794,39 +761,6 @@ AGENTES = {
             "A eficácia do EPI deve ser comprovada de forma concreta."
         )
     },
-    "fumos_metalicos": {
-        "grupo": "Químico",
-        "termos": [
-            "fumos metalicos", "fumos metálicos", "fumo metalico", "fumo metálico",
-            "ferro", "manganes", "manganês", "silicio", "silício", "solda", "soldagem"
-        ],
-        "norma": "NR-15 Anexos 11, 12 e 13, conforme substância",
-        "limite": "Avaliação conforme substância: quantitativa quando houver limite de tolerância; qualitativa quando aplicável",
-        "metodologia": "LTCAT/laudo técnico com identificação da substância, forma de contato e metodologia de avaliação",
-        "fundamento": (
-            "NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos; Anexo 13 trata de agentes qualitativos. "
-            "Para agentes químicos, a simples indicação de EPI eficaz no PPP não encerra a análise previdenciária."
-        )
-    },
-    "poeiras": {
-        "grupo": "Químico",
-        "termos": ["poeira respiravel", "poeira respirável", "poeira total", "poeiras", "poeira"],
-        "norma": "NR-15 Anexo 12 e normas técnicas aplicáveis",
-        "limite": "Avaliação conforme composição da poeira e eventual presença de sílica",
-        "metodologia": "Amostragem ambiental, fração respirável/total e metodologia compatível",
-        "fundamento": "NR-15, Anexo 12: poeiras minerais exigem avaliação conforme composição, concentração e metodologia."
-    },
-    "oleos_minerais": {
-        "grupo": "Químico",
-        "termos": [
-            "oleos minerais", "óleos minerais", "oleo mineral", "óleo mineral",
-            "hidrocarboneto", "hidrocarbonetos", "graxa", "lubrificante"
-        ],
-        "norma": "NR-15 Anexo 13",
-        "limite": "Avaliação qualitativa quando caracterizado contato habitual e permanente",
-        "metodologia": "Laudo qualitativo com descrição da forma de contato e habitualidade",
-        "fundamento": "NR-15, Anexo 13: óleos minerais e hidrocarbonetos podem exigir análise qualitativa da exposição habitual."
-    },
     "biologicos": {
         "grupo": "Biológico",
         "termos": ["biologico", "biológico", "virus", "vírus", "bacteria", "bactéria", "fungo", "hospital", "paciente", "sangue", "secrecao", "secreção", "laboratorio", "laboratório", "lixo urbano", "esgoto", "material infectocontagiante"],
@@ -915,7 +849,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-06-01-adaptativo-v9-diagnostico"
+OCR_PIPELINE_VERSION = "2026-06-01-adaptativo-v11-ajustes-operacionais"
 MARCADOR_METADADOS_OCR = "=== METADADOS INTERNOS DA EXTRAÇÃO OCR ==="
 MARCADOR_DIAGNOSTICO_INTERNO = "=== DIAGNÓSTICO INTERNO DO PIPELINE ==="
 
@@ -988,7 +922,20 @@ def extrair_texto_pdf_bytes(pdf_bytes, pipeline_version):
 
     texto = "\n".join(p for p in partes if p)
 
-    precisa_ocr = len(re.sub(r"\s+", "", texto)) < 300 or not any(t in normalizar(texto) for t in ["lotacao", "registros ambientais", "responsavel pelos registros"])
+    _termos_estruturais = [
+        "lotacao", "lotação",
+        "registros ambientais",
+        "responsavel pelos registros",
+        "responsável pelos registros",
+        "profissiografia",
+        "fator de risco",
+        "agente nocivo",
+        "15.1", "15.3", "16.",
+    ]
+    _texto_norm_ocr = normalizar(texto)
+    _tem_estrutura = any(t in _texto_norm_ocr for t in _termos_estruturais)
+    _texto_curto = len(re.sub(r"\s+", "", texto)) < 300
+    precisa_ocr = _texto_curto or not _tem_estrutura
     if precisa_ocr and pytesseract is not None and convert_from_bytes is not None:
         try:
             imagens = convert_from_bytes(pdf_bytes, dpi=250)
@@ -1470,9 +1417,17 @@ def ocr_soc_celulas_ppp(imagens):
         whitelist = "0123456789-" if numero in {"13.6", "13.7"} else None
         boxes = [box]
         if numero == "13.6":
-            boxes.append((0.400, 0.338, 0.920, 0.358))
+            boxes.extend([
+                (0.400, 0.338, 0.920, 0.358),
+                (0.395, 0.344, 0.925, 0.365),
+                (0.395, 0.338, 0.925, 0.368),
+            ])
         elif numero == "13.7":
-            boxes.append((0.400, 0.349, 0.920, 0.370))
+            boxes.extend([
+                (0.400, 0.349, 0.920, 0.370),
+                (0.395, 0.355, 0.925, 0.378),
+                (0.395, 0.350, 0.925, 0.382),
+            ])
         adicionar_primeiro_crop_ocr_soc(textos, rejeitados, numero, nome, linha, img, boxes, psm=psm, whitelist=whitelist)
 
     colunas_15 = [
@@ -1500,16 +1455,31 @@ def ocr_soc_celulas_ppp(imagens):
         valores_linha = []
         valores_por_numero = {}
         for numero, nome, (x1, _, x2, _), psm in colunas_15:
-            validado = adicionar_crop_ocr_soc(
-                textos,
-                rejeitados,
-                numero,
-                nome,
-                linha,
-                crop_relativo(img, (x1, y1, x2, y2)),
-                psm=psm,
-                tentar_alternativo=numero in {"15.1", "15.2", "15.3"},
-            )
+            if numero in {"15.6", "15.7", "15.8"}:
+                validado = adicionar_primeiro_crop_ocr_soc(
+                    textos,
+                    rejeitados,
+                    numero,
+                    nome,
+                    linha,
+                    img,
+                    [
+                        (x1, y1, x2, y2),
+                        (max(0, x1 - 0.006), y1 - 0.003, min(1, x2 + 0.006), y2 + 0.003),
+                    ],
+                    psm=psm,
+                )
+            else:
+                validado = adicionar_crop_ocr_soc(
+                    textos,
+                    rejeitados,
+                    numero,
+                    nome,
+                    linha,
+                    crop_relativo(img, (x1, y1, x2, y2)),
+                    psm=psm,
+                    tentar_alternativo=numero in {"15.1", "15.2", "15.3"},
+                )
             if validado:
                 valores_linha.append(validado)
                 valores_por_numero[numero] = validado
@@ -1539,7 +1509,13 @@ def ocr_soc_celulas_ppp(imagens):
         ("15.9 [05]", "Higienização", 1, (0.825, 0.842, 0.925, 0.860), 7),
     ]
     for numero, nome, linha, box, psm in celulas_159:
-        adicionar_crop_ocr_soc(textos, rejeitados, numero, nome, linha, crop_relativo(img, box), psm=psm)
+        x1, y1, x2, y2 = box
+        boxes = [
+            box,
+            (max(0, x1 - 0.010), y1 - 0.006, min(1, x2 + 0.010), y2 + 0.006),
+            (max(0, x1 - 0.015), y1 - 0.010, min(1, x2 + 0.015), y2 + 0.010),
+        ]
+        adicionar_primeiro_crop_ocr_soc(textos, rejeitados, numero, nome, linha, img, boxes, psm=psm)
 
     celulas_16 = [
         ("16.1", "Período responsável técnico", 1, (0.090, 0.895, 0.230, 0.913), 7),
@@ -1552,8 +1528,9 @@ def ocr_soc_celulas_ppp(imagens):
         x1, y1, x2, y2 = box
         boxes = [
             box,
-            (max(0, x1 - 0.008), y1 - 0.012, min(1, x2 + 0.008), y2 + 0.004),
-            (max(0, x1 - 0.012), y1 - 0.020, min(1, x2 + 0.012), y2 + 0.008),
+            (max(0, x1 - 0.008), y1 - 0.006, min(1, x2 + 0.008), y2 + 0.012),
+            (max(0, x1 - 0.012), y1 - 0.010, min(1, x2 + 0.012), y2 + 0.020),
+            (max(0, x1 - 0.016), y1 - 0.014, min(1, x2 + 0.016), y2 + 0.028),
         ]
         adicionar_primeiro_crop_ocr_soc(textos, rejeitados, numero, nome, linha, img, boxes, psm=psm, whitelist=whitelist)
 
@@ -2070,7 +2047,7 @@ def extrair_campo9_ctps_ou_esocial(texto):
 # ANÁLISE DE CAMPOS COMPOSTOS: 15.9 E 16
 # ============================================================
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)
 def extrair_subitens_159(texto):
     """
     Extrai e analisa os subitens do campo 15.9:
@@ -2162,7 +2139,7 @@ def extrair_subitens_159(texto):
     return resultados
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)
 def extrair_responsaveis_ambientais_linhas(texto):
     """
     Tenta estruturar as linhas do Campo 16:
@@ -2941,7 +2918,7 @@ def bloco_dados_administrativos(texto):
     return texto[inicio:fim]
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)
 def extrair_campos_administrativos_ocr(texto):
     """
     Lê os campos 1 a 11 quando o OCR devolve a tabela por faixas, não por rótulo.
@@ -3635,7 +3612,7 @@ def extrair_linhas_13_matriciais(texto):
     return resultado
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)
 def extrair_linhas_13_ocr(texto):
     bloco_original = bloco_tabela_por_termos(
         texto,
@@ -3837,7 +3814,7 @@ def extrair_linhas_14_matriciais(texto):
     }
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)
 def extrair_linhas_14_ocr(texto):
     bloco = bloco_tabela_por_termos(
         texto,
@@ -3874,7 +3851,7 @@ def extrair_linhas_14_ocr(texto):
     return deduplicar_linhas_dict(linhas, ["14.1", "14.2"])
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)
 def extrair_linhas_15_ocr(texto):
     bloco = bloco_tabela_por_termos(
         texto,
@@ -5117,9 +5094,36 @@ def status_cache_ocr(metadados):
     return f"CACHE REAPROVEITADO PROVÁVEL: extração original gerada em {extraida_em}"
 
 
+def texto_bloco_diagnostico_placeholder(texto, numero):
+    texto = texto or ""
+    campo_principal = numero.split(".", 1)[0]
+    limites = {
+        "13": (["13 - lotação", "13 - lotacao"], ["14 - profiss"]),
+        "14": (["14 - profiss"], ["15 - expos"]),
+        "15": (["15 - expos"], ["16 - respons"]),
+        "16": (["16 - respons"], ["responsáveis pelas informações", "responsaveis pelas informacoes", "declaramos"]),
+        "17": (["17 ", "data da emissão", "data da emissao"], ["18 ", "representante legal"]),
+        "18": (["18 ", "representante legal"], ["observações", "observacoes", "assinatura"]),
+    }
+    inicio_termos, fim_termos = limites.get(campo_principal, ([], []))
+    if not inicio_termos:
+        return texto
+    texto_norm = normalizar(texto)
+    posicoes_inicio = [texto_norm.find(normalizar(termo)) for termo in inicio_termos]
+    posicoes_inicio = [pos for pos in posicoes_inicio if pos >= 0]
+    if not posicoes_inicio:
+        return texto
+    inicio = min(posicoes_inicio)
+    posicoes_fim = [texto_norm.find(normalizar(termo), inicio + 1) for termo in fim_termos]
+    posicoes_fim = [pos for pos in posicoes_fim if pos > inicio]
+    fim = min(posicoes_fim) if posicoes_fim else len(texto)
+    return texto[inicio:fim]
+
+
 def candidatos_diagnostico_placeholder(texto, numero):
+    texto = texto_bloco_diagnostico_placeholder(texto, numero)
     padroes = {
-        "13.6": r"\b\d{4}(?:-\d{2}|\d{2})\b",
+        "13.6": r"(?<![\d./-])\d{4}(?:-\d{2}|\d{2})(?![\d./-])",
         "13.7": r"\b(?:00|01|04|05|06)\b",
         "15.6": r"(?im)(?:^|\|)\s*(?:-|NA|N/A|NÃO|SIM)\s*(?:\||$)",
         "15.7": r"(?im)(?:^|\|)\s*(?:-|NA|N/A|NÃO|SIM)\s*(?:\||$)",
@@ -5297,6 +5301,14 @@ def preparar_texto_editavel(texto):
 st.title("📄 Raio-X do PPP – PróBenefício")
 st.caption("Análise campo a campo do PPP conforme IN 128/2022, Decreto 3.048/99, NR-15, Temas STF/STJ/TNU e IRDR/TRF4.")
 
+if pytesseract is None or convert_from_bytes is None:
+    st.warning(
+        "⚠️ OCR por imagem não disponível neste ambiente "
+        "(Tesseract/pdf2image não instalado). PDFs escaneados "
+        "podem ter leitura incompleta. Use PDF com texto "
+        "selecionável para melhor resultado."
+    )
+
 with st.sidebar:
     st.header("Configuração")
     trf = st.selectbox("TRF de competência", ["TRF1", "TRF2", "TRF3", "TRF4", "TRF5", "TRF6"], index=3)
@@ -5309,11 +5321,17 @@ texto_manual = st.text_area("Ou cole manualmente o texto extraído do PPP", heig
 texto_final = ""
 
 if uploaded_file:
-    with st.spinner("Extraindo texto do PPP..."):
-        texto_final = extrair_texto_pdf(uploaded_file)
-        texto_final = preparar_texto_editavel(texto_final)
-    st.success("PDF carregado e texto extraído. Revise e complete manualmente os campos faltantes, se necessário.")
+    with st.spinner("📄 Lendo PDF e extraindo texto..."):
+        texto_bruto = extrair_texto_pdf(uploaded_file)
+    with st.spinner("🔍 Preparando campos e placeholders..."):
+        # Etapa 1: preparação do bloco editável (pré-análise)
+        texto_final = preparar_texto_editavel(texto_bruto)
+    st.success(
+        "✅ PDF processado. Revise o texto abaixo e "
+        "preencha campos faltantes antes de gerar o Raio-X."
+    )
 elif texto_manual.strip():
+    # Etapa 1: preparação do bloco editável (pré-análise)
     texto_final = preparar_texto_editavel(texto_manual)
 
 if texto_final:
@@ -5325,8 +5343,24 @@ if st.button("🚀 Gerar Raio-X do PPP", use_container_width=True):
     if not texto_final.strip():
         st.error("Envie um PDF ou cole o texto do PPP.")
     else:
+        # Etapa 2: geração do parecer sobre o texto editado
         texto_para_analise = texto_para_analise_sem_diagnostico(texto_final)
         relatorio, campos, agentes, epi, ltcat, classificacao = gerar_parecer(texto_para_analise, trf)
+
+        _cnae_extraido = extrair_cnae(texto_para_analise)
+        _cnpj_extraido = re.search(
+            r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b",
+            texto_para_analise
+        )
+        if _cnae_extraido and len(re.sub(r"\D", "", _cnae_extraido)) == 7:
+            with st.spinner("Consultando CNAE no IBGE..."):
+                _info_cnae = consultar_cnae_online(_cnae_extraido)
+            if not _info_cnae.get("erro"):
+                st.info(
+                    f"📋 CNAE {_info_cnae['codigo']}: "
+                    f"{_info_cnae['descricao']} "
+                    f"({_info_cnae.get('fonte', '')})"
+                )
 
         st.divider()
         st.header("📋 Resultado Executivo")
@@ -5391,10 +5425,21 @@ if st.button("🚀 Gerar Raio-X do PPP", use_container_width=True):
         st.subheader("📄 Parecer técnico completo")
         st.text_area("Parecer para copiar", relatorio, height=650)
 
-        st.download_button(
-            "⬇️ Baixar parecer em TXT",
-            data=relatorio,
-            file_name="raio_x_ppp_parecer.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.download_button(
+                "⬇️ Baixar parecer em TXT",
+                data=relatorio,
+                file_name="raio_x_ppp_parecer.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
+        with col_b:
+            _relatorio_md = relatorio.replace("# ", "\n# ").replace("## ", "\n## ")
+            st.download_button(
+                "⬇️ Baixar parecer em Markdown",
+                data=_relatorio_md,
+                file_name="raio_x_ppp_parecer.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
