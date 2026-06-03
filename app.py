@@ -849,7 +849,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-06-03-adaptativo-v12-parser-semantico"
+OCR_PIPELINE_VERSION = "2026-06-03-adaptativo-v13-campo15"
 MARCADOR_METADADOS_OCR = "=== METADADOS INTERNOS DA EXTRAÇÃO OCR ==="
 MARCADOR_DIAGNOSTICO_INTERNO = "=== DIAGNÓSTICO INTERNO DO PIPELINE ==="
 
@@ -2464,7 +2464,8 @@ def nome_representante_valido(nome):
         "bairro", "rua", "avenida", "cep", "carimbo", "assinatura", "fundacao",
         "empresa", "calçados", "calcados", "ltda", "cnpj", "representante legal",
         "nome do representante", "beneficente", "camacua", "carlos kr", "kriger",
-        "kriiger", "kruger", "vila nova"
+        "kriiger", "kruger", "vila nova", "circular", "memorando", "conjunto",
+        "observacoes", "observações", "conselho federal", "resultados de monitoracao"
     ]
     if "mipr" in n or ("oswaldt" in n and "andre" not in n and "andré" not in n and "andr" not in n):
         return False
@@ -3345,11 +3346,164 @@ def preencher_por_ordem(dados, chaves, valores):
 
 def extrair_ca_linha_15(texto):
     texto = str(texto or "")
+    texto = re.sub(r"\bCNAE\b.{0,30}", " ", texto, flags=re.IGNORECASE)
+    texto = re.sub(r"-?\b\d{4}-\d/\d{2}\b", " ", texto)
     texto = re.sub(r"\b\d{2}/\d{2}/\d{4}\b", " ", texto)
     texto = re.sub(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?", " ", texto, flags=re.IGNORECASE)
     candidatos = re.findall(r"\b\d{3,8}\b", texto)
-    candidatos = [c for c in candidatos if not re.match(r"^(?:19|20)\d{2}$", c)]
+    candidatos = [
+        c for c in candidatos
+        if not re.match(r"^(?:19|20)\d{2}$", c)
+        and not re.match(r"^(?:0[1-9]|[12]\d|3[01])(?:0[1-9]|1[0-2])\d{2,4}$", c)
+        and c not in {"8299"}
+    ]
     return candidatos[-1] if candidatos else ""
+
+
+def linhas_bloco_campo15(texto):
+    linhas = (texto or "").splitlines()
+    inicio = None
+    termos_inicio = [
+        "15 - exposicao", "15 exposicao", "15 - exposição", "15 exposição",
+        "registros ambientais", "fator de risco", "15.1",
+    ]
+    termos_fim = [
+        "16 - respons", "16.1", "responsavel pelos registros ambientais",
+        "responsável pelos registros ambientais", "17 -", "18 -", "19 -", "20 -",
+    ]
+    termo_inicio_encontrado = ""
+    for idx, linha in enumerate(linhas):
+        ln = normalizar(linha)
+        termo_inicio_encontrado = next((t for t in termos_inicio if t in ln), "")
+        if termo_inicio_encontrado:
+            inicio = idx
+            break
+    if inicio is None:
+        return []
+    fim = len(linhas)
+    for idx in range(inicio + 1, len(linhas)):
+        ln = normalizar(linhas[idx])
+        if any(t in ln for t in termos_fim):
+            fim = idx
+            break
+    recorte = list(linhas[inicio:fim])
+    if recorte and termo_inicio_encontrado:
+        inicio_textual = indice_original_por_texto_normalizado(recorte[0], termo_inicio_encontrado)
+        if inicio_textual > 0:
+            recorte[0] = recorte[0][inicio_textual:]
+    return recorte
+
+
+def periodo_ambiental_herdado(texto_bloco, texto_total):
+    periodos = re.findall(periodo_ppp_regex(), texto_bloco or "", flags=re.IGNORECASE)
+    for periodo in periodos:
+        periodo_limpo = re.sub(r"\s+", " ", periodo).strip()
+        if re.search(r"\b(?:a|ate|até|atual|-)\b", periodo_limpo, flags=re.IGNORECASE):
+            return periodo_limpo
+    bloco_13 = bloco_tabela_por_termos(
+        texto_total,
+        ["13 - lotação", "13 lotação", "lotação e atribuição", "lotacao e atribuicao"],
+        ["14 -", "14.1", "profissiografia", "15 -"],
+    )
+    for periodo in re.findall(periodo_ppp_regex(), "\n".join(bloco_13), flags=re.IGNORECASE):
+        periodo_limpo = re.sub(r"\s+", " ", periodo).strip()
+        if re.search(r"\b(?:a|ate|até|atual|-)\b", periodo_limpo, flags=re.IGNORECASE):
+            return periodo_limpo
+    return ""
+
+
+def aliases_busca_agente_campo15(agente):
+    a = normalizar(agente)
+    aliases = [agente]
+    if "ruido" in a:
+        aliases += ["ruido continuo ou intermitente", "ruido continuo", "ruido"]
+    if "vibracao de corpo inteiro" in a:
+        aliases += ["vibracao de corpo inteiro", "vci", "vdvr"]
+    if "vibracao de maos" in a:
+        aliases += ["vibracao de maos e bracos", "maos e bracos", "vmb", "aren"]
+    if "radiacoes nao ionizantes" in a or "radiacao" in a:
+        aliases += ["radiacao nao ionizante", "radiacoes nao ionizantes"]
+    if "poeira respiravel" in a:
+        aliases += ["poeira respiravel"]
+    if "poeira total" in a:
+        aliases += ["poeira total"]
+    if "fumos metalicos" in a:
+        aliases += ["fumos metalicos"]
+    return aliases
+
+
+def posicao_agente_campo15(texto_bloco, agente):
+    for alias in aliases_busca_agente_campo15(agente):
+        pos = indice_original_por_texto_normalizado(texto_bloco, alias)
+        if pos != -1:
+            return pos
+    return -1
+
+
+def contexto_agente_campo15(texto_bloco, agente, posicoes):
+    pos = posicao_agente_campo15(texto_bloco, agente)
+    if pos == -1:
+        return agente
+    proximas = [p for p in posicoes if p > pos]
+    fim = min(proximas) if proximas else pos + 360
+    return texto_bloco[pos:fim]
+
+
+def extrair_linhas_15_por_agentes_catalogados(bloco, texto_total):
+    texto_bloco = "\n".join(bloco or [])
+    texto_agentes = re.split(r"\b15\.?9\b|Atendimento aos requisitos", texto_bloco, maxsplit=1, flags=re.IGNORECASE)[0]
+    agentes = extrair_agentes_detectados_campo15(texto_agentes)
+    if not agentes:
+        return {}
+    posicoes = []
+    for agente in agentes:
+        pos = posicao_agente_campo15(texto_agentes, agente)
+        if pos != -1:
+            posicoes.append(pos)
+    posicoes = sorted(set(posicoes))
+    periodo = periodo_ambiental_herdado(texto_agentes, texto_total)
+    linhas = {}
+    for agente in agentes:
+        contexto = re.sub(r"\s+", " ", contexto_agente_campo15(texto_agentes, agente, posicoes)).strip()
+        dados = {
+            "15.1": periodo,
+            "15.2": inferir_tipo_agente_15(agente),
+            "15.3": agente,
+            "_agentes_detectados": agente,
+            "_linha_original": contexto,
+            "_linha_por_agente": True,
+        }
+        intensidade = re.search(
+            r"\b\d+(?:[,.]\d+)?\s*(?:dB\s*\(?A?\)?(?:\s*NEN)?|ppm|mg/m[³3])\b|"
+            r"\b(?:qualitativ[ao]|quantitativ[ao]|ND)\b",
+            contexto,
+            flags=re.IGNORECASE,
+        )
+        if intensidade:
+            dados["15.4"] = intensidade.group(0)
+        tecnica = re.search(
+            r"(?:NHO[-\s]*01|NR[-\s]*15(?:\s*,?\s*anexo\s*\d+)?|Decibel.{0,3}metro|"
+            r"Dos.{0,3}metria|Medi[cç][aã]o\s+de\s+NPS|NIOSH[-\s]*\d+|Inspe[cç][aã]o)",
+            contexto,
+            flags=re.IGNORECASE,
+        )
+        if tecnica:
+            dados["15.5"] = re.sub(r"\s+", " ", tecnica.group(0)).strip()
+        respostas = re.findall(r"\b(NA|N/?A|N[aã]o|Sim|S|N)\b", contexto, flags=re.IGNORECASE)
+        if respostas:
+            dados["15.6"] = normalizar_resposta_sn(respostas[0])
+        if len(respostas) >= 2:
+            dados["15.7"] = normalizar_resposta_sn(respostas[1])
+        ca = extrair_ca_linha_15(contexto)
+        if ca:
+            dados["15.8"] = ca
+        elif re.search(r"(?:^|\s)-\s*-\s*-", contexto):
+            dados["15.6"] = "NA"
+            dados["15.7"] = "NA"
+            dados["15.8"] = "NA"
+        normalizar_linha_15(dados)
+        linhas[len(linhas) + 1] = dados
+    return linhas
 
 
 def normalizar_linha_15(dados):
@@ -3383,6 +3537,10 @@ def normalizar_linha_15(dados):
     for chave in ["15.4", "15.5", "15.6", "15.7", "15.8"]:
         if valor_nao_aplicavel_estrutural(dados.get(chave, "")):
             dados[chave] = "NA"
+    if re.search(r"(?:^|\s)-\s*-\s*-", linha_original):
+        dados["15.6"] = "NA"
+        dados["15.7"] = "NA"
+        dados["15.8"] = "NA"
     if (
         not dados.get("15.6")
         and dados.get("15.7") == "NA"
@@ -3436,6 +3594,8 @@ def normalizar_linha_15(dados):
         ca = extrair_ca_linha_15(dados.get("15.8", ""))
         if ca:
             dados["15.8"] = ca
+        elif normalizar(str(dados.get("15.8", ""))) not in {"na", "nao se aplica"}:
+            dados["15.8"] = ""
     if not dados.get("15.8") or "nao extraido" in normalizar(str(dados.get("15.8", ""))):
         ca_linha = extrair_ca_linha_15(linha_original)
         if ca_linha:
@@ -3906,13 +4066,18 @@ def extrair_linhas_14_ocr(texto):
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def extrair_linhas_15_ocr(texto):
-    bloco = bloco_tabela_por_termos(
+    bloco = linhas_bloco_campo15(texto)
+    if not bloco:
+        bloco = bloco_tabela_por_termos(
         texto,
         ["15 - exposição", "15 exposicao", "15 -", "15.1", "exposição a fatores de riscos", "exposicao a fatores de riscos", "fatores de riscos"],
-        ["15.9", "16 - respons", "16.1", "responsável pelos registros", "responsavel pelos registros"],
-    )
-    if not bloco and re.search(r"15\s*[-:]?.{0,160}(?:Fatores\s+de\s+Riscos|Exposi.{0,4}o)|Fumos\s+met[aá\?]licos|Qu[ií\?]mico", texto or "", flags=re.IGNORECASE | re.DOTALL):
-        bloco = (texto or "").splitlines()
+        ["16 - respons", "16.1", "responsável pelos registros", "responsavel pelos registros"],
+        )
+    if not bloco:
+        return {}
+    linhas_por_agente = extrair_linhas_15_por_agentes_catalogados(bloco, texto)
+    if len(linhas_por_agente) >= 2:
+        return deduplicar_linhas_dict(linhas_por_agente, ["15.1", "15.2", "15.3", "15.4", "15.5", "15.6", "15.7", "15.8"])
     bloco = agrupar_linhas_por_inicio_estrutural(bloco, "15")
     linhas = {}
     padrao_periodo = periodo_ppp_regex()
@@ -4212,16 +4377,23 @@ def montar_linhas_compostas(texto, campo):
             ["observações", "observacoes", "assinatura"],
         )
         texto_20 = "\n".join(bloco_20)
+        janela_rep_curta = re.split(
+            r"\b(?:Observa[cç][oõ]es|As informa[cç][oõ]es referentes|Memorando[-\s]Circular)\b",
+            janela_rep,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        fonte_representante = texto_18 + "\n" + texto_20 + "\n" + janela_rep_curta
         cpf = (
             valor_manual_campo(texto, "18.1")
             or valor_manual_campo(texto, "20.1")
             or extrair_cpf_ou_nit(manual18)
         )
         nome = valor_manual_campo(texto, "18.2") or valor_manual_campo(texto, "20.2")
-        for linha_rep in (texto_18 + "\n" + texto_20 + "\n" + janela_rep).splitlines():
+        for linha_rep in fonte_representante.splitlines():
             valores = tokens_linha_ocr(linha_rep)
-            if len(valores) >= 2 and re.search(r"\d{3}[\.\,\:]?\d{3,6}", linha_rep):
-                candidatos_cpf = [v for v in valores if re.search(r"\d{3}[\.\,\:]?\d{3,6}", v)]
+            if len(valores) >= 2 and re.search(r"[-<\)]?\d{3}[\.\,\:]?\d{3,6}", linha_rep):
+                candidatos_cpf = [v for v in valores if re.search(r"[-<\)]?\d{3}[\.\,\:]?\d{3,6}", v)]
                 candidatos_nome = [limpar_nome_representante(v) for v in valores]
                 candidatos_nome = [v for v in candidatos_nome if nome_representante_valido(v)]
                 if not cpf and candidatos_cpf:
@@ -4256,9 +4428,15 @@ def montar_linhas_compostas(texto, campo):
             if m_cpf:
                 cpf = normalizar_cpf_nit_visual(m_cpf.group(0))
         if not cpf and janela_rep:
-            candidatos_cpf = re.findall(r"\b\d{3}[\.\,]?\d{3,6}[\.\,\:]?\d{2,6}[-:<\)]?\d{1,2}\b", janela_rep)
+            candidatos_cpf = re.findall(r"[-<\)]?\d{3}[\.\,]?\d{3,6}[\.\,\:]?\d{2,6}[-:<\)]?\d{1,2}", fonte_representante)
             if candidatos_cpf:
                 cpf = normalizar_cpf_nit_visual(candidatos_cpf[0])
+        if not cpf and fonte_representante:
+            for candidato_doc in re.findall(r"[-<\)\d\.\,\:]{10,24}", fonte_representante):
+                cpf_visual = normalizar_cpf_nit_visual(candidato_doc)
+                if len(limpar_documento_numerico(cpf_visual)) == 11:
+                    cpf = cpf_visual
+                    break
         if not nome:
             m_nome_20 = re.search(r"20\.2\s*Nome\s*([^\n\r]+)", texto_20, flags=re.IGNORECASE)
             m_nome = m_nome_20 or re.search(r"\bNome\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç\s]{5,80})", texto_20)
@@ -4271,20 +4449,24 @@ def montar_linhas_compostas(texto, campo):
                 nomes = [n for n in nomes if nome_representante_valido(n)]
                 if nomes:
                     nome = nomes[-1]
-        if not nome and janela_rep:
-            m_oswaldt = re.search(r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+(?:\s+Oswaldt|OSWALDT)(?:\s*-\s*(?:Diret|Diretor|Administrador))?)", janela_rep, flags=re.IGNORECASE)
+        if not nome and fonte_representante:
+            m_oswaldt = re.search(r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+(?:\s+Oswaldt|OSWALDT)(?:\s*-\s*(?:Diret|Diretor|Administrador))?)", fonte_representante, flags=re.IGNORECASE)
             if m_oswaldt and nome_representante_valido(m_oswaldt.group(1)):
                 nome = limpar_nome_representante(m_oswaldt.group(1))
-        if not nome and janela_rep:
-            m_oswaldt_ocr = re.search(r"([A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\?]{2,}\s+oswa\w+(?:\s*-\s*(?:Diret|Diretor|Administrador))?)", janela_rep, flags=re.IGNORECASE)
+        if not nome and fonte_representante:
+            m_oswaldt_ocr = re.search(r"([A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç\?]{2,}\s+oswa\w+(?:\s*-\s*(?:Diret|Diretor|Administrador))?)", fonte_representante, flags=re.IGNORECASE)
             if m_oswaldt_ocr and nome_representante_valido(m_oswaldt_ocr.group(1)):
                 nome = limpar_nome_representante(m_oswaldt_ocr.group(1))
-        if not nome and janela_rep:
-            m_assinatura_nome = re.search(r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+){1,4}\s*-\s*(?:Diret|Diretor|Administrador))", janela_rep)
+        if not nome and fonte_representante:
+            m_assinatura_nome = re.search(r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+){1,4}\s*-\s*(?:Diret|Diretor|Administrador))", fonte_representante)
             if m_assinatura_nome and nome_representante_valido(m_assinatura_nome.group(1)):
                 nome = limpar_nome_representante(m_assinatura_nome.group(1))
-        if not nome and janela_rep:
-            candidatos_nome = re.findall(r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+){1,4}\b", janela_rep)
+        if not nome and fonte_representante:
+            candidatos_nome = re.findall(
+                r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{2,}(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{2,}){1,5}\b|"
+                r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+){1,4}\b",
+                fonte_representante,
+            )
             candidatos_nome = [n for n in candidatos_nome if nome_representante_valido(n)]
             if candidatos_nome:
                 nome = candidatos_nome[-1]
