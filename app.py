@@ -849,7 +849,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-06-01-adaptativo-v11-ajustes-operacionais"
+OCR_PIPELINE_VERSION = "2026-06-03-adaptativo-v12-parser-semantico"
 MARCADOR_METADADOS_OCR = "=== METADADOS INTERNOS DA EXTRAÇÃO OCR ==="
 MARCADOR_DIAGNOSTICO_INTERNO = "=== DIAGNÓSTICO INTERNO DO PIPELINE ==="
 
@@ -1856,6 +1856,36 @@ def extrair_epc_15_6(texto):
     return sorted(set(resultados))
 
 
+def responsavel_ambiental_linha_coerente(item):
+    periodo = "" if valor_ausente_estrutural(item.get("periodo")) else str(item.get("periodo", "")).strip()
+    cpf = "" if valor_ausente_estrutural(item.get("cpf")) else str(item.get("cpf", "")).strip()
+    registro = "" if valor_ausente_estrutural(item.get("registro")) else str(item.get("registro", "")).strip()
+    nome = "" if valor_ausente_estrutural(item.get("nome")) else str(item.get("nome", "")).strip()
+    nome_norm = normalizar(nome)
+    nome_humano = bool(
+        nome
+        and len(nome.split()) >= 2
+        and not any(t in nome_norm for t in [
+            "nome do profissional",
+            "profissional legalmente",
+            "representante legal",
+            "responsavel legal",
+            "responsável legal",
+            "declaramos",
+        ])
+    )
+    registro_valido = bool(registro and re.search(r"\b(?:CRM|CREA|CRQ|MTE)\b|\b\d{3,8}(?:/[A-Z]{2}|\s*[A-Z]-[A-Z]{2})\b", registro, flags=re.IGNORECASE))
+    cpf_valido = bool(cpf and re.search(r"\d", cpf))
+    periodo_valido = bool(periodo and re.search(r"\d{2}/(?:\d{2}/)?\d{4}|\d{2}/\d{4}", periodo))
+    return bool(
+        registro_valido
+        and (
+            nome_humano
+            or (cpf_valido and periodo_valido)
+        )
+    )
+
+
 def extrair_responsavel_tecnico(texto):
     """
     Extrai e classifica o responsável técnico do Campo 16:
@@ -1874,7 +1904,10 @@ def extrair_responsavel_tecnico(texto):
 
     try:
         if "extrair_responsaveis_ambientais_linhas" in globals():
-            responsaveis_linhas = extrair_responsaveis_ambientais_linhas(texto)
+            responsaveis_linhas = [
+                r for r in extrair_responsaveis_ambientais_linhas(texto)
+                if responsavel_ambiental_linha_coerente(r)
+            ]
             if responsaveis_linhas:
                 r = responsaveis_linhas[0]
                 return {
@@ -1887,12 +1920,25 @@ def extrair_responsavel_tecnico(texto):
     except Exception:
         pass
 
-    cpfs = re.findall(r"\b\d{3}\.?\d{3,6}\.?\d{2,6}-?\d{1,2}\b|\b\d{10,11}\b", texto)
+    bloco_16 = bloco_tabela_por_termos(
+        texto,
+        ["16 - respons", "16.1", "responsável pelos registros ambientais", "responsavel pelos registros ambientais"],
+        [
+            "17 -", "18 -", "18.1", "19 data", "20 representante",
+            "responsáveis pelas informações", "responsaveis pelas informacoes",
+            "declaramos", "data da emissão", "data da emissao",
+            "representante legal", "=== ocr",
+        ],
+    ) if "bloco_tabela_por_termos" in globals() else []
+    texto_campo16 = "\n".join(bloco_16).strip()
+    if not texto_campo16:
+        return dados
+
+    cpfs = re.findall(r"\b\d{3}\.?\d{3,6}\.?\d{2,6}-?\d{1,2}\b|\b\d{10,11}\b", texto_campo16)
     if cpfs:
-        # normalmente o CPF do responsável vem depois do CPF do segurado
         dados["cpf"] = cpfs[-1]
 
-    registros = re.findall(r"\b(?:CRM|CREA|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:/[A-Z]{2})?\b|\b\d{3,6}/[A-Z]{2}\b", texto, flags=re.IGNORECASE)
+    registros = re.findall(r"\b(?:CRM|CREA|MTE)\s*[-.]?\s*[\d\.]{2,12}(?:/[A-Z]{2})?\b|\b\d{3,6}/[A-Z]{2}\b", texto_campo16, flags=re.IGNORECASE)
     if registros:
         dados["registro"] = registros[-1]
 
@@ -1905,14 +1951,14 @@ def extrair_responsavel_tecnico(texto):
     ]
 
     for p in padroes_nome:
-        m = re.search(p, texto, flags=re.IGNORECASE | re.DOTALL)
+        m = re.search(p, texto_campo16, flags=re.IGNORECASE | re.DOTALL)
         if m:
             nome = re.sub(r"\s+", " ", m.group(1)).strip()
             nome = re.sub(r"^(Nome|do|profissional|legalmente|habilitado)\s+", "", nome, flags=re.IGNORECASE)
             dados["nome"] = nome
             break
 
-    texto_norm = normalizar(texto)
+    texto_norm = normalizar(texto_campo16)
 
     # Profissão/habilitação: procura de forma ampla no texto do Campo 16 e no documento.
     if any(x in texto_norm for x in [
@@ -1939,18 +1985,11 @@ def extrair_responsavel_tecnico(texto):
     elif "mte" in texto_norm:
         dados["profissao"] = "profissional habilitado com registro MTE"
 
-    if (
-        dados["cpf"]
-        or dados["registro"]
-        or dados["nome"]
-        or dados["profissao"] != "não identificada claramente"
-        or "crea" in texto_norm
-        or "crm" in texto_norm
-        or "mte" in texto_norm
-        or "engenheiro" in texto_norm
-        or "medico do trabalho" in texto_norm
-    ):
-        dados["localizado"] = True
+    dados["localizado"] = bool(
+        (dados["cpf"] and dados["registro"])
+        or (dados["registro"] and dados["nome"])
+        or (dados["cpf"] and dados["nome"])
+    )
 
     return dados
 
@@ -2307,7 +2346,10 @@ def analisar_campos_compostos_159_16(texto):
             "estrategia": "Conferir fichas de EPI, CA, recibos, treinamento, higienização, troca e LTCAT."
         })
 
-    responsaveis = extrair_responsaveis_ambientais_linhas(texto)
+    responsaveis = [
+        r for r in extrair_responsaveis_ambientais_linhas(texto)
+        if responsavel_ambiental_linha_coerente(r)
+    ]
     if responsaveis:
         for idx, r in enumerate(responsaveis, start=1):
             achados.append({
@@ -2443,7 +2485,7 @@ def limpar_nome_representante(nome):
 def limpar_nome_responsavel_tecnico(nome):
     nome = re.sub(r"\s+", " ", str(nome or "")).strip(" -:|")
     nome = re.split(
-        r"\b(?:DOOM|SE.{0,3}O|RESULTADOS|MONITORA.{0,3}O|BIOL[OÓ\?]GICA|RESPONS[AÁ\?]VEIS?|RESPONS[AÁ\?]VEL\s+PELA|18\s*[-.:])\b",
+        r"\b(?:DOOM|SE.{0,3}O|RESULTADOS|MONITORA.{0,3}O|BIOL[OÓ\?]GICA|RESPONS[AÁ\?]VEIS?|RESPONS[AÁ\?]VEL\s+PELA|DATA\s+DA\s+EMISS[AÃ\?]O|17\s*[-.:]?|18\s*[-.:])\b",
         nome,
         maxsplit=1,
         flags=re.IGNORECASE,
@@ -3364,6 +3406,17 @@ def normalizar_linha_15(dados):
             dados["15.5"] = re.sub(r"\s+", " ", m.group(0)).strip()
     fator_norm = normalizar(str(dados.get("15.3", "")))
     tipo_norm = normalizar(str(dados.get("15.2", "")))
+    if dados.get("_agentes_detectados") and "ruido" not in fator_norm:
+        agentes_filtrados = [
+            a.strip()
+            for a in str(dados.get("_agentes_detectados", "")).split("|")
+            if a.strip() and "ruido" not in normalizar(a)
+        ]
+        dados["_agentes_detectados"] = " | ".join(agentes_filtrados)
+    if "ruido" not in fator_norm and re.search(r"\bdB\b", str(dados.get("15.4", "")), flags=re.IGNORECASE):
+        dados["15.4"] = ""
+    if "ruido" not in fator_norm and re.search(r"(?:Decibel|NHO[-\s]*01|Medi[cç\?].{0,4}o\s+de\s+NPS)", str(dados.get("15.5", "")), flags=re.IGNORECASE):
+        dados["15.5"] = ""
     if "ruido" not in fator_norm and tipo_norm != "fisico":
         if re.search(r"\bdB\b", str(dados.get("15.4", "")), flags=re.IGNORECASE):
             dados["15.4"] = ""
@@ -4095,7 +4148,10 @@ def montar_linhas_compostas(texto, campo):
                 manuais[idx].setdefault(k, v)
 
     if campo["numero"] == "16":
-        responsaveis = extrair_responsaveis_ambientais_linhas(texto)
+        responsaveis = [
+            r for r in extrair_responsaveis_ambientais_linhas(texto)
+            if responsavel_ambiental_linha_coerente(r)
+        ]
         for idx, resp in enumerate(responsaveis, start=1):
             manuais.setdefault(idx, {})
             manuais[idx].setdefault("16.1", resp.get("periodo", ""))
@@ -4651,10 +4707,15 @@ def coletar_base_legal_utilizada(falhas, agentes, epi, ltcat):
     Evita despejar toda a base legal no parecer.
     """
     bases = []
+    fundamentos_vistos = set()
 
     def add(titulo, texto):
         if not texto:
             return
+        chave_fundamento = re.sub(r"\s+", " ", texto.strip())
+        if chave_fundamento in fundamentos_vistos:
+            return
+        fundamentos_vistos.add(chave_fundamento)
         item = (titulo.strip(), texto.strip())
         if item not in bases:
             bases.append(item)
@@ -4832,13 +4893,22 @@ def gerar_parecer(texto, trf):
     linhas.append("## BASE LEGAL UTILIZADA NA ANÁLISE")
     bases_utilizadas = coletar_base_legal_utilizada(falhas, agentes, epi, ltcat)
     bases_tribunal = selecionar_base_tribunal(trf, agentes, texto)
+    fundamentos_exibidos = set()
     if bases_utilizadas:
         for titulo, fundamento in bases_utilizadas:
+            chave_fundamento = re.sub(r"\s+", " ", fundamento.strip())
+            if chave_fundamento in fundamentos_exibidos:
+                continue
+            fundamentos_exibidos.add(chave_fundamento)
             linhas.append(f"### {titulo}")
             linhas.append(f"- {fundamento}")
             linhas.append("")
 
         for titulo, fundamento in bases_tribunal:
+            chave_fundamento = re.sub(r"\s+", " ", fundamento.strip())
+            if chave_fundamento in fundamentos_exibidos:
+                continue
+            fundamentos_exibidos.add(chave_fundamento)
             linhas.append(f"### {titulo}")
             linhas.append(f"- {fundamento}")
             linhas.append("")
