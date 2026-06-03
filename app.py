@@ -849,7 +849,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-06-03-adaptativo-v14-conservadora"
+OCR_PIPELINE_VERSION = "2026-06-03-adaptativo-v15-delimitacao-campo15"
 MARCADOR_METADADOS_OCR = "=== METADADOS INTERNOS DA EXTRAÇÃO OCR ==="
 MARCADOR_DIAGNOSTICO_INTERNO = "=== DIAGNÓSTICO INTERNO DO PIPELINE ==="
 
@@ -3348,6 +3348,7 @@ def extrair_ca_linha_15(texto):
     texto = str(texto or "")
     texto = re.sub(r"\bCNAE\b.{0,30}", " ", texto, flags=re.IGNORECASE)
     texto = re.sub(r"-?\b\d{4}-\d/\d{2}\b", " ", texto)
+    texto = re.sub(r"\b(?:8299|2829|0162)[-/]?\d{0,3}\b", " ", texto)
     texto = re.sub(r"\b\d{2}/\d{2}/\d{4}\b", " ", texto)
     texto = re.sub(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?", " ", texto, flags=re.IGNORECASE)
     candidatos = re.findall(r"\b\d{3,8}\b", texto)
@@ -3355,7 +3356,7 @@ def extrair_ca_linha_15(texto):
         c for c in candidatos
         if not re.match(r"^(?:19|20)\d{2}$", c)
         and not re.match(r"^(?:0[1-9]|[12]\d|3[01])(?:0[1-9]|1[0-2])\d{2,4}$", c)
-        and c not in {"8299"}
+        and c not in {"8299", "2829", "0162"}
     ]
     return candidatos[-1] if candidatos else ""
 
@@ -3363,19 +3364,42 @@ def extrair_ca_linha_15(texto):
 def linhas_bloco_campo15(texto):
     linhas = (texto or "").splitlines()
     inicio = None
-    termos_inicio = [
-        "15 - exposicao", "15 exposicao", "15 - exposição", "15 exposição",
-        "registros ambientais", "fator de risco", "15.1",
+    termos_contexto_ambiental = [
+        "registros ambientais", "ii - registros ambientais", "ii- registros ambientais",
+        "exposicao a fatores", "exposição a fatores", "fator de risco",
+    ]
+    termos_inicio_fortes = [
+        "registros ambientais", "ii - registros ambientais", "ii- registros ambientais",
+        "15 - exposicao a fatores", "15- exposicao a fatores",
+        "15 - exposição a fatores", "15- exposição a fatores",
+        "exposicao a fatores de riscos", "exposição a fatores de riscos",
+        "exposicao a fatores de risco", "exposição a fatores de risco",
+    ]
+    termos_inicio_condicionais = [
+        "15.1", "15 1", "periodo tipo fator de risco", "período tipo fator de risco",
+        "fator de risco intensidade",
     ]
     termos_fim = [
         "16 - respons", "16.1", "responsavel pelos registros ambientais",
-        "responsável pelos registros ambientais", "17 -", "18 -", "19 -", "20 -",
+        "responsável pelos registros ambientais", "responsaveis pelas informacoes",
+        "responsáveis pelas informações", "17 data", "17 -", "18 representante",
+        "18 -", "19 ", "20 ", "=== ocr", "=== agentes", "=== campos",
+        "=== diagnostico", "=== diagnóstico",
     ]
     termo_inicio_encontrado = ""
+    contexto_ambiental_visto = False
     for idx, linha in enumerate(linhas):
         ln = normalizar(linha)
-        termo_inicio_encontrado = next((t for t in termos_inicio if t in ln), "")
-        if termo_inicio_encontrado:
+        if any(t in ln for t in termos_contexto_ambiental):
+            contexto_ambiental_visto = True
+        termo_forte = next((t for t in termos_inicio_fortes if t in ln), "")
+        termo_condicional = next((t for t in termos_inicio_condicionais if t in ln), "")
+        if termo_forte:
+            termo_inicio_encontrado = termo_forte
+            inicio = idx
+            break
+        if termo_condicional and contexto_ambiental_visto:
+            termo_inicio_encontrado = termo_condicional
             inicio = idx
             break
     if inicio is None:
@@ -3392,6 +3416,50 @@ def linhas_bloco_campo15(texto):
         if inicio_textual > 0:
             recorte[0] = recorte[0][inicio_textual:]
     return recorte
+
+
+def periodo_ambiental_valido_15(valor):
+    valor = re.sub(r"\s+", " ", str(valor or "")).strip()
+    if not valor:
+        return False
+    return bool(re.search(
+        r"\b(?:0[1-9]|[12]\d|3[01])/(?:0[1-9]|1[0-2])/\d{4}\s*(?:a|ate|até|-)\s*(?:atual|(?:0[1-9]|[12]\d|3[01])/(?:0[1-9]|1[0-2])/\d{4})?\b",
+        valor,
+        flags=re.IGNORECASE,
+    ))
+
+
+def motivo_rejeicao_linha_15(dados):
+    linha_original = str(dados.get("_linha_original", ""))
+    linha_norm = normalizar(linha_original)
+    marcador_admin = (
+        "dados administrativos", "nome do trabalhador", "data do nascimento",
+        "data de nascimento", "matricula do trabalhador", "data de admissao",
+        "regime de revezamento", "nome empresarial", "cnpj do domicilio",
+        "br/pdh", " cnae ", " cpf ",
+    )
+    if any(m in f" {linha_norm} " for m in marcador_admin):
+        return "linha veio de dados administrativos"
+    if re.search(r"\b1[34]\.[1-7]\b|lotacao|lotação|profissiografia", linha_norm):
+        return "linha continha Campo 13/14, rejeitada como Campo 15"
+    periodo = str(dados.get("15.1", ""))
+    if periodo and not periodo_ambiental_valido_15(periodo):
+        return "15.1 não é período ambiental válido"
+    fator_norm = normalizar(str(dados.get("15.3", "")))
+    if fator_norm and not fator_ruido_15(dados.get("15.3", "")):
+        if re.search(r"\bdB\b", str(dados.get("15.4", "")), flags=re.IGNORECASE):
+            return "agente não-ruído recebeu intensidade de ruído"
+        if re.search(r"(?:Decibel|NHO[-\s]*01|NHO\s*01|Medi[cç\?].{0,4}o\s+de\s+NPS)", str(dados.get("15.5", "")), flags=re.IGNORECASE):
+            return "agente não-ruído recebeu técnica de ruído"
+    ca = str(dados.get("15.8", ""))
+    if ca and normalizar(ca) != "na" and not re.fullmatch(r"\d{3,8}(?:\s*[,/]\s*\d{3,8})*", ca):
+        return "CA inválido para 15.8"
+    return ""
+
+
+def fator_ruido_15(valor):
+    v = normalizar(str(valor or ""))
+    return "ruido" in v or bool(re.search(r"\bru.?do\b", str(valor or ""), flags=re.IGNORECASE))
 
 
 def periodo_ambiental_herdado(texto_bloco, texto_total):
@@ -3564,18 +3632,21 @@ def normalizar_linha_15(dados):
             dados["15.5"] = re.sub(r"\s+", " ", m.group(0)).strip()
     fator_norm = normalizar(str(dados.get("15.3", "")))
     tipo_norm = normalizar(str(dados.get("15.2", "")))
-    if dados.get("_agentes_detectados") and "ruido" not in fator_norm:
+    eh_ruido = fator_ruido_15(dados.get("15.3", ""))
+    if dados.get("_agentes_detectados") and not eh_ruido:
         agentes_filtrados = [
             a.strip()
             for a in str(dados.get("_agentes_detectados", "")).split("|")
-            if a.strip() and "ruido" not in normalizar(a)
+            if a.strip() and not fator_ruido_15(a)
         ]
         dados["_agentes_detectados"] = " | ".join(agentes_filtrados)
-    if "ruido" not in fator_norm and re.search(r"\bdB\b", str(dados.get("15.4", "")), flags=re.IGNORECASE):
+    if not eh_ruido and re.search(r"\bdB\b", str(dados.get("15.4", "")), flags=re.IGNORECASE):
         dados["15.4"] = ""
-    if "ruido" not in fator_norm and re.search(r"(?:Decibel|NHO[-\s]*01|Medi[cç\?].{0,4}o\s+de\s+NPS)", str(dados.get("15.5", "")), flags=re.IGNORECASE):
+        dados["_rejeicao_semantica_15"] = "agente não-ruído recebeu intensidade de ruído"
+    if not eh_ruido and re.search(r"(?:Decibel|NHO[-\s]*01|Medi[cç\?].{0,4}o\s+de\s+NPS)", str(dados.get("15.5", "")), flags=re.IGNORECASE):
         dados["15.5"] = ""
-    if "ruido" not in fator_norm and tipo_norm != "fisico":
+        dados["_rejeicao_semantica_15"] = "agente não-ruído recebeu técnica de ruído"
+    if not eh_ruido and tipo_norm != "fisico":
         if re.search(r"\bdB\b", str(dados.get("15.4", "")), flags=re.IGNORECASE):
             dados["15.4"] = ""
         if re.search(r"(?:Decibel|NHO[-\s]*01|Medi[cç\?].{0,4}o\s+de\s+NPS)", str(dados.get("15.5", "")), flags=re.IGNORECASE):
@@ -3602,6 +3673,8 @@ def normalizar_linha_15(dados):
             dados["15.8"] = ca_linha
         elif normalizar(str(dados.get("15.7", ""))) in {"na", "nao se aplica"}:
             dados["15.8"] = "NA"
+    if dados.get("15.1") and not periodo_ambiental_valido_15(dados.get("15.1")):
+        dados["15.1"] = ""
     return dados
 
 
@@ -4068,12 +4141,6 @@ def extrair_linhas_14_ocr(texto):
 def extrair_linhas_15_ocr(texto):
     bloco = linhas_bloco_campo15(texto)
     if not bloco:
-        bloco = bloco_tabela_por_termos(
-        texto,
-        ["15 - exposição", "15 exposicao", "15 -", "15.1", "exposição a fatores de riscos", "exposicao a fatores de riscos", "fatores de riscos"],
-        ["16 - respons", "16.1", "responsável pelos registros", "responsavel pelos registros"],
-        )
-    if not bloco:
         return {}
     bloco = agrupar_linhas_por_inicio_estrutural(bloco, "15")
     linhas = {}
@@ -4187,7 +4254,18 @@ def extrair_linhas_15_ocr(texto):
         linhas[idx] = dados
         ultimo_idx = idx
 
-    linhas = suplementar_linhas_15_por_agentes(bloco, linhas)
+    rejeitadas = []
+    linhas_validas = {}
+    for _, dados in sorted(linhas.items()):
+        motivo = motivo_rejeicao_linha_15(dados)
+        if motivo:
+            rejeitadas.append({
+                "motivo": motivo,
+                "trecho": re.sub(r"\s+", " ", str(dados.get("_linha_original", "")))[:260],
+            })
+            continue
+        linhas_validas[len(linhas_validas) + 1] = dados
+    linhas = linhas_validas
     if linhas:
         for idx, dados in linhas.items():
             inicio = dados.get("_linha_original", "")
@@ -4210,6 +4288,17 @@ def extrair_linhas_15_ocr(texto):
                 if len(respostas) >= 2:
                     dados["15.7"] = respostas[1]
             normalizar_linha_15(dados)
+        linhas_validas = {}
+        for _, dados in sorted(linhas.items()):
+            motivo = motivo_rejeicao_linha_15(dados)
+            if motivo:
+                rejeitadas.append({
+                    "motivo": motivo,
+                    "trecho": re.sub(r"\s+", " ", str(dados.get("_linha_original", "")))[:260],
+                })
+                continue
+            linhas_validas[len(linhas_validas) + 1] = dados
+        linhas = linhas_validas
     if not linhas and ppp_sem_agentes_declarados(texto):
         linhas[1] = {
             "15.1": "NA",
@@ -4228,7 +4317,7 @@ def extrair_linhas_15_ocr(texto):
             "15.9 [05]": "NA",
             "_linha_original": "PPP sem agentes nocivos declarados",
         }
-    if not linhas and documento_legado_ppp(texto):
+    if not linhas and documento_legado_ppp(texto) and not bloco:
         legado = corpus_agentes_legado(texto)
         fator = inferir_fator_risco_15(legado)
         tipo = inferir_tipo_agente_15(fator or legado)
@@ -4250,7 +4339,7 @@ def extrair_linhas_15_ocr(texto):
         m_periodo = re.search(periodo_ppp_regex(), texto_bloco, flags=re.IGNORECASE)
         tipo_fallback = inferir_tipo_agente_15(texto_bloco)
         fator_fallback = inferir_fator_risco_15(texto_bloco)
-        if m_periodo and (tipo_fallback or fator_fallback):
+        if m_periodo and periodo_ambiental_valido_15(m_periodo.group(0)) and (tipo_fallback or fator_fallback):
             idx = 1
             dados = {"15.1": m_periodo.group(0).strip(), "_linha_original": re.sub(r"\s+", " ", texto_bloco[:400]).strip()}
             for linha_coluna in bloco:
@@ -4277,9 +4366,18 @@ def extrair_linhas_15_ocr(texto):
             if len(respostas) >= 2:
                 dados["15.7"] = respostas[1]
             normalizar_linha_15(dados)
-            linhas[idx] = dados
+            motivo = motivo_rejeicao_linha_15(dados)
+            if motivo:
+                rejeitadas.append({
+                    "motivo": motivo,
+                    "trecho": re.sub(r"\s+", " ", str(dados.get("_linha_original", "")))[:260],
+                })
+            else:
+                linhas[idx] = dados
     for dados in linhas.values():
         normalizar_linha_15(dados)
+    if rejeitadas and linhas:
+        linhas[1]["_linhas_15_rejeitadas"] = rejeitadas[:8]
     return deduplicar_linhas_dict(linhas, ["15.1", "15.2", "15.3", "15.4", "15.5", "15.6", "15.7", "15.8"])
 
 
@@ -4428,6 +4526,10 @@ def montar_linhas_compostas(texto, campo):
             candidatos_cpf = re.findall(r"[-<\)]?\d{3}[\.\,]?\d{3,6}[\.\,\:]?\d{2,6}[-:<\)]?\d{1,2}", fonte_representante)
             if candidatos_cpf:
                 cpf = normalizar_cpf_nit_visual(candidatos_cpf[0])
+        if not cpf and fonte_representante:
+            m_cpf_visual_18 = re.search(r"[-<\)]?\d{3}[\.\,]?\d{3,6}[\.\,\:]?\d{2}\b", fonte_representante)
+            if m_cpf_visual_18:
+                cpf = normalizar_cpf_nit_visual(m_cpf_visual_18.group(0))
         if not cpf and fonte_representante:
             for candidato_doc in re.findall(r"[-<\)\d\.\,\:]{10,24}", fonte_representante):
                 cpf_visual = normalizar_cpf_nit_visual(candidato_doc)
