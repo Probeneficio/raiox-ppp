@@ -849,7 +849,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-06-03-adaptativo-v13-campo15"
+OCR_PIPELINE_VERSION = "2026-06-03-adaptativo-v14-conservadora"
 MARCADOR_METADADOS_OCR = "=== METADADOS INTERNOS DA EXTRAÇÃO OCR ==="
 MARCADOR_DIAGNOSTICO_INTERNO = "=== DIAGNÓSTICO INTERNO DO PIPELINE ==="
 
@@ -4075,9 +4075,6 @@ def extrair_linhas_15_ocr(texto):
         )
     if not bloco:
         return {}
-    linhas_por_agente = extrair_linhas_15_por_agentes_catalogados(bloco, texto)
-    if len(linhas_por_agente) >= 2:
-        return deduplicar_linhas_dict(linhas_por_agente, ["15.1", "15.2", "15.3", "15.4", "15.5", "15.6", "15.7", "15.8"])
     bloco = agrupar_linhas_por_inicio_estrutural(bloco, "15")
     linhas = {}
     padrao_periodo = periodo_ppp_regex()
@@ -5519,6 +5516,8 @@ def preparar_texto_editavel(texto):
             for linha in campo["linhas"]:
                 for numero in linha.get("campos_incompletos", []):
                     dados = linha["subcampos"].get(numero, {})
+                    if subcampo_estruturado_no_resultado(campos, numero, linha.get("linha")):
+                        continue
                     if deve_gerar_placeholder_subcampo(texto_analise, campo, linha, numero, dados):
                         faltantes.append(placeholder_manual(numero, dados.get("nome", campo["nome"]), linha["linha"]))
         elif campo["status"] == "INCOMPLETO":
