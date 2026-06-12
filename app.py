@@ -876,7 +876,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-06-11-adaptativo-v18-ocr-portatil"
+OCR_PIPELINE_VERSION = "2026-06-12-adaptativo-v22-soc-tecnico"
 MARCADOR_METADADOS_OCR = "=== METADADOS INTERNOS DA EXTRAÇÃO OCR ==="
 MARCADOR_DIAGNOSTICO_INTERNO = "=== DIAGNÓSTICO INTERNO DO PIPELINE ==="
 
@@ -908,8 +908,11 @@ def texto_para_analise_sem_diagnostico(texto):
     return texto.rstrip()
 
 
-def extrair_texto_pdf(uploaded_file):
-    return extrair_texto_pdf_bytes(uploaded_file.read(), OCR_PIPELINE_VERSION)
+def extrair_texto_pdf(uploaded_file, versao_execucao=""):
+    versao = OCR_PIPELINE_VERSION
+    if versao_execucao:
+        versao = f"{versao}-{versao_execucao}"
+    return extrair_texto_pdf_bytes(uploaded_file.read(), versao)
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60 * 24)
@@ -1221,6 +1224,26 @@ def ocr_celula(crop, psm=6):
     return re.sub(r"\s+", " ", texto or "").strip(" -:|")
 
 
+def ocr_celula_simples(crop, psm=6, whitelist=None):
+    if pytesseract is None:
+        return ""
+    from PIL import ImageOps
+
+    img = ImageOps.autocontrast(crop.convert("L"))
+    img = img.resize((max(1, img.width * 3), max(1, img.height * 3)))
+    config = f"--psm {psm} -c preserve_interword_spaces=1"
+    if whitelist:
+        config += f" -c tessedit_char_whitelist={whitelist}"
+    try:
+        texto = pytesseract.image_to_string(img, lang="por+eng", config=config)
+    except Exception:
+        try:
+            texto = pytesseract.image_to_string(img, config=config)
+        except Exception:
+            texto = ""
+    return re.sub(r"\s+", " ", texto or "").strip(" -:|")
+
+
 def ocr_celula_com_whitelist(crop, whitelist, psm=7):
     if pytesseract is None:
         return ""
@@ -1383,7 +1406,13 @@ def validar_valor_ocr_soc(numero, valor):
         m = re.search(r"\b(?:(?:CRM|CREA|CRQ|MTE)\s*[-.]?\s*\d{2,12}(?:[/\-][A-Z]{2})?|\d{3,8}(?:/[A-Z]{2}|\s*[A-Z]-[A-Z]{2}))\b", valor, flags=re.IGNORECASE)
         return re.sub(r"\s+", " ", m.group(0)).strip() if m else ""
     if numero == "16.4":
-        return valor if nome_responsavel_tecnico_soc_valido(valor) else ""
+        candidato = re.match(
+            r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]+"
+            r"(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]+){1,5})",
+            valor,
+        )
+        nome = candidato.group(1).strip() if candidato else valor
+        return nome if nome_responsavel_tecnico_soc_valido(nome) else ""
     return valor
 
 
@@ -1496,7 +1525,7 @@ def ocr_soc_celulas_ppp(imagens):
     colunas_15 = [
         ("15.1", "Período", (0.070, 0.000, 0.155, 0.000), 7),
         ("15.2", "Tipo", (0.155, 0.000, 0.215, 0.000), 7),
-        ("15.3", "Fator de risco", (0.205, 0.000, 0.350, 0.000), 6),
+        ("15.3", "Fator de risco", (0.190, 0.000, 0.380, 0.000), 6),
         ("15.4", "Intensidade / concentração", (0.325, 0.000, 0.470, 0.000), 6),
         ("15.5", "Técnica utilizada", (0.470, 0.000, 0.595, 0.000), 6),
         ("15.6", "EPC eficaz", (0.595, 0.000, 0.668, 0.000), 7),
@@ -1518,19 +1547,12 @@ def ocr_soc_celulas_ppp(imagens):
         valores_linha = []
         valores_por_numero = {}
         for numero, nome, (x1, _, x2, _), psm in colunas_15:
-            if numero in {"15.6", "15.7", "15.8"}:
-                validado = adicionar_primeiro_crop_ocr_soc(
-                    textos,
-                    rejeitados,
-                    numero,
-                    nome,
-                    linha,
-                    img,
-                    [
-                        (x1, y1, x2, y2),
-                        (max(0, x1 - 0.006), y1 - 0.003, min(1, x2 + 0.006), y2 + 0.003),
-                    ],
-                    psm=psm,
+            if numero in {"15.3", "15.4", "15.5", "15.6", "15.7", "15.8"}:
+                crop = crop_relativo(img, (x1, y1 - 0.003, x2, y2 + 0.003))
+                whitelist = "0123456789,./" if numero == "15.8" else None
+                bruto = ocr_celula_simples(crop, psm=6, whitelist=whitelist)
+                validado = adicionar_ocr_soc_validado(
+                    textos, rejeitados, numero, nome, linha, bruto
                 )
             else:
                 validado = adicionar_crop_ocr_soc(
@@ -1581,21 +1603,21 @@ def ocr_soc_celulas_ppp(imagens):
         adicionar_primeiro_crop_ocr_soc(textos, rejeitados, numero, nome, linha, img, boxes, psm=psm)
 
     celulas_16 = [
-        ("16.1", "Período responsável técnico", 1, (0.090, 0.895, 0.230, 0.913), 7),
-        ("16.2", "NIT/CPF do responsável", 1, (0.230, 0.895, 0.485, 0.913), 7),
-        ("16.3", "Registro conselho de classe", 1, (0.485, 0.895, 0.685, 0.913), 7),
-        ("16.4", "Nome do profissional legalmente habilitado", 1, (0.685, 0.895, 0.920, 0.913), 7),
+        ("16.1", "Período responsável técnico", 1, (0.075, 0.875, 0.235, 0.895), 7),
+        ("16.2", "NIT/CPF do responsável", 1, (0.225, 0.875, 0.490, 0.895), 7),
+        ("16.3", "Registro conselho de classe", 1, (0.480, 0.875, 0.690, 0.895), 7),
+        ("16.4", "Nome do profissional legalmente habilitado", 1, (0.650, 0.870, 0.940, 0.897), 6),
     ]
     for numero, nome, linha, box, psm in celulas_16:
-        whitelist = "0123456789.-" if numero == "16.2" else None
-        x1, y1, x2, y2 = box
-        boxes = [
-            box,
-            (max(0, x1 - 0.008), y1 - 0.006, min(1, x2 + 0.008), y2 + 0.012),
-            (max(0, x1 - 0.012), y1 - 0.010, min(1, x2 + 0.012), y2 + 0.020),
-            (max(0, x1 - 0.016), y1 - 0.014, min(1, x2 + 0.016), y2 + 0.028),
-        ]
-        adicionar_primeiro_crop_ocr_soc(textos, rejeitados, numero, nome, linha, img, boxes, psm=psm, whitelist=whitelist)
+        whitelist = "0123456789.-" if numero == "16.2" else (
+            "0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ" if numero == "16.3" else None
+        )
+        bruto = ocr_celula_simples(
+            crop_relativo(img, box),
+            psm=psm,
+            whitelist=whitelist,
+        )
+        adicionar_ocr_soc_validado(textos, rejeitados, numero, nome, linha, bruto)
 
     if rejeitados:
         textos.append(f"\n=== LEITURAS OCR SOC REJEITADAS: {len(rejeitados)} ===")
@@ -1607,7 +1629,17 @@ def possui(texto_norm, termos):
 
 
 def extrair_datas(texto):
-    return re.findall(r"\b\d{2}/\d{2}/\d{4}\b", texto)
+    datas = []
+    for valor in re.findall(r"\b\d{2}/\d{2}/\d{4}\b", texto or ""):
+        try:
+            data = datetime.strptime(valor, "%d/%m/%Y")
+        except ValueError:
+            continue
+        if data.year < 1900 or data.year > datetime.now().year:
+            continue
+        if valor not in datas:
+            datas.append(valor)
+    return datas
 
 
 def extrair_ruidos(texto):
@@ -1693,6 +1725,7 @@ def limpar_valor_campo_escalar(numero, valor):
     elif numero == "6":
         m = re.search(r"\b\d{10,11}\b|\b\d{3}[\.\d-]{6,20}\b", valor)
         valor = m.group(0) if m else ""
+        valor = normalizar_cpf_nit_visual(valor) if documento_cpf_nit_valido(valor) else ""
     elif numero == "7":
         m = re.search(r"\b\d{2}/\d{2}/\d{4}\b|\b\d{2}/\d{6}\b", valor)
         valor = normalizar_data_ocr(m.group(0)) if m else valor
@@ -1705,15 +1738,20 @@ def limpar_valor_campo_escalar(numero, valor):
         else:
             valor = ""
     elif numero == "9":
+        if re.search(r"\b(?:CNPJ|CNAE|CPF|NIT|Data|Admiss[aã]o|Nascimento)\b", valor, flags=re.IGNORECASE):
+            return ""
         m = re.search(r"\b\d{3,}/\d{2,}(?:\s*[-/]\s*[A-Z]{2})?\b", valor, flags=re.IGNORECASE)
         if m:
             valor = re.sub(r"/([A-Z]{2})$", r" - \1", m.group(0).strip())
         else:
             matricula = re.search(r"\b(?=[A-Z0-9]{1,30}\b)(?=[A-Z0-9]*\d)[A-Z0-9]{1,30}\b", valor, flags=re.IGNORECASE)
             valor = matricula.group(0) if matricula else ""
+        if re.fullmatch(r"\d{2}/\d{2}/\d{4}", valor) or len(re.sub(r"\D", "", valor)) in {11, 14}:
+            valor = ""
     elif numero == "10":
         m = re.search(r"\b\d{2}/\d{2}/\d{4}\b|\b\d{2}/\d{6}\b", valor)
         valor = normalizar_data_ocr(m.group(0)) if m else valor
+        valor = valor if data_calendario_valida(valor) else ""
     elif numero == "11":
         m = re.search(r"\b(NA|N/?A|N[aã]o\s+aplic[aá]vel|Sim|N[aã]o)\b", valor, flags=re.IGNORECASE)
         valor = m.group(1) if m else ""
@@ -1865,7 +1903,7 @@ def extrair_data_admissao(texto):
 
     if manual:
         m_manual = re.search(r"\b\d{2}/\d{2}/\d{4}\b", manual)
-        if m_manual:
+        if m_manual and data_calendario_valida(m_manual.group(0)):
             return m_manual.group(0)
 
     padroes = [
@@ -1877,7 +1915,7 @@ def extrair_data_admissao(texto):
 
     for padrao in padroes:
         m = re.search(padrao, texto, flags=re.IGNORECASE | re.DOTALL)
-        if m:
+        if m and data_calendario_valida(m.group(1)):
             return m.group(1).strip()
 
     return ""
@@ -1937,8 +1975,8 @@ def responsavel_ambiental_linha_coerente(item):
             "declaramos",
         ])
     )
-    registro_valido = bool(registro and re.search(r"\b(?:CRM|CREA|CRQ|MTE)\b|\b\d{3,8}(?:/[A-Z]{2}|\s*[A-Z]-[A-Z]{2})\b", registro, flags=re.IGNORECASE))
-    cpf_valido = bool(cpf and re.search(r"\d", cpf))
+    registro_valido = registro_profissional_valido(registro)
+    cpf_valido = documento_cpf_nit_valido(cpf)
     periodo_valido = bool(periodo and re.search(r"\d{2}/(?:\d{2}/)?\d{4}|\d{2}/\d{4}", periodo))
     return bool(
         registro_valido
@@ -1961,9 +1999,26 @@ def extrair_responsavel_tecnico(texto):
         "cpf": "",
         "registro": "",
         "nome": "",
-        "profissao": "não identificada claramente",
+        "profissao": "habilitação não confirmada",
         "localizado": False
     }
+
+    manuais_16 = linhas_manuais_por_campo(texto, ["16.1", "16.2", "16.3", "16.4"])
+    for _, linha in sorted(manuais_16.items()):
+        periodo = validar_valor_ocr_soc("16.1", linha.get("16.1", ""))
+        cpf = validar_valor_ocr_soc("16.2", linha.get("16.2", ""))
+        registro = validar_valor_ocr_soc("16.3", linha.get("16.3", ""))
+        nome = validar_valor_ocr_soc("16.4", linha.get("16.4", ""))
+        if registro and ((cpf and periodo) or nome):
+            return {
+                "cpf": cpf,
+                "registro": registro,
+                "nome": nome,
+                "profissao": classificar_habilitacao_responsavel(
+                    " ".join(linha.values()), registro
+                ),
+                "localizado": True,
+            }
 
     try:
         if "extrair_responsaveis_ambientais_linhas" in globals():
@@ -1977,7 +2032,7 @@ def extrair_responsavel_tecnico(texto):
                     "cpf": "" if valor_ausente_estrutural(r.get("cpf")) else r.get("cpf", ""),
                     "registro": "" if valor_ausente_estrutural(r.get("registro")) else r.get("registro", ""),
                     "nome": "" if valor_ausente_estrutural(r.get("nome")) else r.get("nome", ""),
-                    "profissao": r.get("habilitacao", "não identificada claramente"),
+                    "profissao": r.get("habilitacao", "habilitação não confirmada"),
                     "localizado": True,
                 }
     except Exception:
@@ -2023,30 +2078,14 @@ def extrair_responsavel_tecnico(texto):
 
     texto_norm = normalizar(texto_campo16)
 
-    # Profissão/habilitação: procura de forma ampla no texto do Campo 16 e no documento.
-    if any(x in texto_norm for x in [
-        "medico do trabalho",
-        "médico do trabalho",
-        "medicina do trabalho",
-        "crm",
-        "medico coordenador",
-        "médico coordenador"
-    ]):
-        dados["profissao"] = "médico do trabalho"
-    elif any(x in texto_norm for x in [
-        "engenheiro de seguranca",
-        "engenheiro de segurança",
-        "engenheira de seguranca",
-        "engenheira de segurança",
-        "engenheiro do trabalho",
-        "engenheira do trabalho",
-        "engenheiro",
-        "engenheira",
-        "crea"
-    ]):
-        dados["profissao"] = "engenheiro de segurança do trabalho / engenheiro do trabalho"
-    elif "mte" in texto_norm:
-        dados["profissao"] = "profissional habilitado com registro MTE"
+    if dados["cpf"] and not documento_cpf_nit_valido(dados["cpf"]):
+        dados["cpf"] = ""
+    if dados["registro"] and not registro_profissional_valido(dados["registro"]):
+        dados["registro"] = ""
+    if dados["nome"] and not nome_responsavel_tecnico_soc_valido(dados["nome"]):
+        dados["nome"] = ""
+
+    dados["profissao"] = classificar_habilitacao_responsavel(texto_campo16, dados["registro"])
 
     dados["localizado"] = bool(
         (dados["cpf"] and dados["registro"])
@@ -2090,7 +2129,9 @@ def extrair_cpf_ou_nit(texto):
         manual = ""
 
     if manual and not re.match(r"^\s*\d+\s*[-:]", manual):
-        return manual.strip()
+        manual = limpar_valor_campo_escalar("6", manual)
+        if documento_cpf_nit_valido(manual):
+            return manual
 
     padroes = [
         r"6\s*[-–:]?\s*(?:CPF/NIT|CPF|NIT|PIS|PASEP)\s*[:\-]?\s*([0-9.\-]{10,20})",
@@ -2104,8 +2145,58 @@ def extrair_cpf_ou_nit(texto):
         m = re.search(padrao, texto, flags=re.IGNORECASE)
         if m:
             valor = m.group(1).strip()
-            if valor and not re.match(r"^\s*\d+\s*[-:]", valor):
+            valor = limpar_valor_campo_escalar("6", valor)
+            if documento_cpf_nit_valido(valor):
                 return valor
+
+
+def documento_cpf_nit_valido(valor):
+    digitos = re.sub(r"\D", "", str(valor or ""))
+    if len(digitos) not in {10, 11} or len(set(digitos)) == 1:
+        return False
+    if len(digitos) == 11:
+        soma = sum(int(digitos[i]) * (10 - i) for i in range(9))
+        primeiro = (soma * 10 % 11) % 10
+        soma = sum(int(digitos[i]) * (11 - i) for i in range(10))
+        segundo = (soma * 10 % 11) % 10
+        if digitos[-2:] == f"{primeiro}{segundo}":
+            return True
+        # NIT/PIS/PASEP também possui 11 dígitos, com cálculo próprio.
+        pesos = [3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+        resto = sum(int(d) * peso for d, peso in zip(digitos[:10], pesos)) % 11
+        verificador = 11 - resto
+        if verificador in {10, 11}:
+            verificador = 0
+        return int(digitos[-1]) == verificador
+    return True
+
+
+def data_calendario_valida(valor):
+    try:
+        datetime.strptime(str(valor or "").strip(), "%d/%m/%Y")
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def registro_profissional_valido(valor):
+    valor = re.sub(r"\s+", " ", str(valor or "")).strip()
+    return bool(re.fullmatch(
+        r"(?:(?:CRM|CREA|CRQ|MTE)\s*[-.]?\s*)?\d{2,12}(?:[/\-][A-Z]{2})?",
+        valor,
+        flags=re.IGNORECASE,
+    ))
+
+
+def classificar_habilitacao_responsavel(texto, registro=""):
+    contexto = normalizar(f"{texto or ''} {registro or ''}")
+    if re.search(r"\bmedic.?[oa]\s+do\s+trabalho\b|\bmedicina\s+do\s+trabalho\b", contexto):
+        return "médico do trabalho"
+    if re.search(r"\bengenheir[oa]\s+de\s+seguran.?a\s+do\s+trabalho\b", contexto):
+        return "engenheiro de segurança do trabalho"
+    if re.search(r"\b(?:crm|crea|crq|mte)\b", contexto):
+        return "habilitação não confirmada"
+    return "habilitação não confirmada"
 
     return ""
 
@@ -2124,7 +2215,9 @@ def extrair_campo9_ctps_ou_esocial(texto):
         manual = ""
 
     if manual and not re.match(r"^\s*\d+\s*[-:]", manual) and manual.lower() not in ["esocial", "e social"]:
-        return manual.strip()
+        manual = limpar_valor_campo_escalar("9", manual)
+        if manual:
+            return manual
 
     padroes = [
         r"9\s*[-–:]?\s*(?:CTPS|Matr[ií]cula(?:\s+do\s+Trabalhador)?(?:\s+no)?\s*eSocial|Matr[ií]cula)\s*(?:\(.*?\))?\s*[:\-]?\s*([0-9A-Z./\-]{3,40})",
@@ -2137,7 +2230,8 @@ def extrair_campo9_ctps_ou_esocial(texto):
         m = re.search(padrao, texto, flags=re.IGNORECASE)
         if m:
             valor = m.group(1).strip()
-            if valor.lower() not in ["esocial", "e social"] and not re.match(r"^\s*\d+\s*[-:]", valor):
+            valor = limpar_valor_campo_escalar("9", valor)
+            if valor:
                 return valor
 
     return ""
@@ -2300,12 +2394,7 @@ def extrair_responsaveis_ambientais_linhas(texto):
             nome = limpar_nome_responsavel_tecnico(m.group("nome"))
             if "nome do profissional" in normalizar(nome) or "profissional legalmente" in normalizar(nome):
                 continue
-            reg_norm = normalizar(registro)
-            habilitacao = "médico do trabalho" if "crm" in reg_norm else (
-                "engenheiro de segurança do trabalho / engenheiro do trabalho" if "crea" in reg_norm else (
-                    "profissional habilitado com registro MTE" if "mte" in reg_norm else "não identificada claramente"
-                )
-            )
+            habilitacao = classificar_habilitacao_responsavel(linha, registro)
             item = {
                 "periodo": periodo,
                 "cpf": cpf or "não localizado",
@@ -2331,14 +2420,7 @@ def extrair_responsaveis_ambientais_linhas(texto):
             if "nome do profissional" in normalizar(nome):
                 continue
 
-            habilitacao = "não identificada claramente"
-            reg_norm = normalizar(registro)
-            if "crm" in reg_norm:
-                habilitacao = "médico do trabalho"
-            elif "crea" in reg_norm:
-                habilitacao = "engenheiro de segurança do trabalho / engenheiro do trabalho"
-            elif "mte" in reg_norm:
-                habilitacao = "profissional habilitado com registro MTE"
+            habilitacao = classificar_habilitacao_responsavel(m.group(0), registro)
 
             item = {
                 "periodo": periodo,
@@ -2368,12 +2450,7 @@ def extrair_responsaveis_ambientais_linhas(texto):
             if registro or nome or periodo:
                 if not registro:
                     continue
-                reg_norm = normalizar(registro)
-                habilitacao = "médico do trabalho" if "crm" in reg_norm else (
-                    "engenheiro de segurança do trabalho / engenheiro do trabalho" if "crea" in reg_norm else (
-                        "profissional habilitado com registro MTE" if "mte" in reg_norm else "não identificada claramente"
-                    )
-                )
+                habilitacao = classificar_habilitacao_responsavel(texto_base, registro)
                 responsaveis.append({
                     "periodo": periodo or "não localizado",
                     "cpf": cpf or "não localizado",
@@ -2689,6 +2766,23 @@ def normalizar_resposta_sn(valor):
     if valor_nao_aplicavel_estrutural(bruto):
         return "NA"
     return bruto
+
+
+def tipo_agente_confiavel(fator):
+    fator_norm = normalizar(str(fator or ""))
+    if any(t in fator_norm for t in [
+        "fumos metalicos", "poeira", "oleos minerais", "hidrocarbon",
+        "solvente", "silica", "manganes",
+    ]):
+        return "Químico"
+    if any(t in fator_norm for t in [
+        "ruido", "vibracao", "radiacao", "calor", "frio", "umidade",
+    ]):
+        return "Físico"
+    chave_agente = chave_agente_para_rotulo(fator)
+    if chave_agente:
+        return AGENTES.get(chave_agente, {}).get("grupo", "")
+    return inferir_tipo_agente_15(fator)
 
 
 def ppp_sem_agentes_declarados(texto):
@@ -3297,29 +3391,35 @@ def extrair_valor_escalar_estruturado(texto, campo):
                 ["17 data", "17 - data", "data da emissão do ppp", "data de emissão do ppp", "data emissão ppp", "data emissao ppp"],
                 ["18 representante", "18 - representante", "19 ", "20 "],
             )
-            m_bloco_17 = re.search(r"\b\d{2}/\d{2}/\d{4}\b", "\n".join(bloco_17))
-            if m_bloco_17:
-                return m_bloco_17.group(0)
+            datas_bloco_17 = extrair_datas("\n".join(bloco_17))
+            if datas_bloco_17:
+                return datas_bloco_17[0]
             m19 = re.search(r"(?is)(?:19\s*[-.:]?\s*)?Data\s*de\s*Emiss[aã]o\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})", texto or "")
-            if m19:
+            if m19 and data_calendario_valida(m19.group(1)):
                 return m19.group(1)
             m19_proximo = re.search(r"(?is)\b19\b.{0,40}Data\s*de\s*Emiss[aã]o.{0,80}?(\d{2}/\d{2}/\d{4})", texto or "")
-            if m19_proximo:
+            if m19_proximo and data_calendario_valida(m19_proximo.group(1)):
                 return m19_proximo.group(1)
             m19_generico = re.search(r"(?is)\b19\b.{0,140}?(\d{2}/\d{2}/\d{4})", texto or "")
-            if m19_generico:
+            if m19_generico and data_calendario_valida(m19_generico.group(1)):
                 return m19_generico.group(1)
             m_data_generica = re.search(r"(?is)Data\s*(?:da|de)?\s*Emiss.{0,8}o(?:\s*do\s*PPP)?.{0,160}?(\d{2}/\d{2}/\d{4})", texto or "")
-            if m_data_generica:
+            if m_data_generica and data_calendario_valida(m_data_generica.group(1)):
                 return m_data_generica.group(1)
             bloco_19 = bloco_tabela_por_termos(
                 texto,
                 ["19 data de emissão", "19 data de emissao", "data de emissão", "data de emissao"],
                 ["20 representante", "representante legal", "observações", "observacoes"],
             )
-            m_bloco_19 = re.search(r"\b\d{2}/\d{2}/\d{4}\b", "\n".join(bloco_19))
-            if m_bloco_19:
-                return m_bloco_19.group(0)
+            datas_bloco_19 = extrair_datas("\n".join(bloco_19))
+            if datas_bloco_19:
+                return datas_bloco_19[0]
+            datas_documento = extrair_datas(texto)
+            if datas_documento:
+                return max(
+                    datas_documento,
+                    key=lambda valor: datetime.strptime(valor, "%d/%m/%Y"),
+                )
         rotulo = trecho_apos_rotulo(texto, numero, campo["nome"], campo.get("termos"))
         data = re.search(r"\b\d{2}/\d{2}/\d{4}\b", rotulo)
         return data.group(0) if data else limpar_valor_campo_escalar(numero, rotulo)
@@ -3792,7 +3892,7 @@ def normalizar_linha_15(dados):
         dados["_agentes_detectados"] = " | ".join(agentes_detectados)
     if fator:
         dados["15.3"] = fator
-        tipo_fator = inferir_tipo_agente_15(fator)
+        tipo_fator = tipo_agente_confiavel(fator)
         if tipo_fator:
             dados["15.2"] = tipo_fator
 
@@ -4790,6 +4890,8 @@ def montar_linhas_compostas(texto, campo):
     linhas = []
     for idx in sorted(manuais):
         dados = manuais[idx]
+        if campo["numero"] == "15":
+            normalizar_linha_15(dados)
         subdados = {}
         incompletos = []
         for numero, nome in subcampos:
@@ -4797,6 +4899,9 @@ def montar_linhas_compostas(texto, campo):
                 "" if bloquear_fallback_16_isolado and campo["numero"] == "16"
                 else valor_manual_campo_linha(texto, numero, idx)
             )
+            if valor and numero.startswith(("13.", "14.", "15.", "16.")):
+                valor_validado = validar_valor_ocr_soc(numero, valor)
+                valor = valor_validado or ""
             if not valor and numero == "15.9":
                 valor = "ver subitens" if any(dados.get(n) for n, _ in subcampos if n.startswith("15.9 [")) else ""
             subdados[numero] = {"nome": nome, "valor": valor}
@@ -4945,9 +5050,53 @@ def analisar_campos(texto):
     return [campo_estruturado_para_resultado(campo, texto) for campo in PPP_CAMPOS_ESTRUTURADOS]
 
 
+def linhas_campo15_para_analise(texto):
+    numeros = [f"15.{indice}" for indice in range(1, 9)]
+    extraidas = copy.deepcopy(extrair_linhas_15_ocr(texto))
+    manuais = linhas_manuais_por_campo(texto, numeros)
+    linhas = {}
+    for indice, valores in manuais.items():
+        linha = {}
+        for numero, valor in valores.items():
+            validado = validar_valor_ocr_soc(numero, valor)
+            if validado:
+                linha[numero] = validado
+        base = extraidas.get(indice, {})
+        fator_manual = linha.get("15.3", "")
+        fator_base = base.get("15.3", "")
+        fatores_compativeis = (
+            not fator_manual
+            or not fator_base
+            or normalizar(fator_manual) == normalizar(fator_base)
+        )
+        if fatores_compativeis:
+            for numero in numeros:
+                if not linha.get(numero) and base.get(numero):
+                    validado = validar_valor_ocr_soc(numero, base[numero])
+                    if validado:
+                        linha[numero] = validado
+        if linha.get("15.3"):
+            tipo_fator = tipo_agente_confiavel(linha["15.3"])
+            if tipo_fator:
+                linha["15.2"] = tipo_fator
+        linha.setdefault("_linha_original", f"Complementação manual da linha {indice}")
+        normalizar_linha_15(linha)
+        if linha.get("15.3"):
+            linhas[indice] = linha
+    for indice, linha in extraidas.items():
+        if indice in linhas or not linha.get("15.3"):
+            continue
+        normalizar_linha_15(linha)
+        linhas[indice] = linha
+    return deduplicar_linhas_dict(
+        linhas,
+        ["15.1", "15.2", "15.3", "15.4", "15.5", "15.6", "15.7", "15.8"],
+    )
+
+
 def corpus_agentes_campo15(texto):
     partes = []
-    for dados in extrair_linhas_15_ocr(texto).values():
+    for dados in linhas_campo15_para_analise(texto).values():
         for chave in ["15.2", "15.3", "15.4", "15.5", "_agentes_detectados"]:
             valor = dados.get(chave, "")
             if valor and not valor_ausente_estrutural(valor):
@@ -5043,95 +5192,63 @@ def analisar_agentes(texto):
                 agentes.append(item)
                 vistos.add(item["agente"])
 
-    tipos = []
-    for dados in extrair_linhas_15_ocr(texto).values():
-        tipo = dados.get("15.2", "")
-        if tipo and not valor_ausente_estrutural(tipo):
-            tipos.append(tipo)
-    if not tipos:
-        tipos = extrair_tipo_15_2(corpus_15)
-    tipos_norm = [normalizar(t) for t in tipos]
-
-    if "fisico" in tipos_norm and not any(normalizar(a["grupo"]).startswith("fisic") for a in agentes):
-        agentes.append({
-            "agente": "fisicos_generico",
-            "grupo": "Físico",
-            "norma": "NR-15 e Decreto 3.048/99, conforme agente físico específico",
-            "limite": "Depende do agente físico identificado no PPP",
-            "metodologia": "Conferir campo 15.3, 15.4 e 15.5",
-            "fundamento": (
-                "Agentes físicos exigem análise conforme o agente específico, metodologia, intensidade e habitualidade. "
-                "Quando o PPP indicar tipo Físico no campo 15.2, deve-se conferir o fator de risco no campo 15.3."
-            ),
-            "enquadramento": "TIPO FÍSICO IDENTIFICADO — exige conferência do fator de risco específico."
-        })
-
-    if "quimico" in tipos_norm and not any("quim" in normalizar(a["grupo"]) for a in agentes):
-        agentes.append({
-            "agente": "quimicos_generico",
-            "grupo": "Químico",
-            "norma": "NR-15 Anexos 11, 12 e 13, conforme substância",
-            "limite": "Quantitativo ou qualitativo conforme o agente químico",
-            "metodologia": "Conferir campo 15.3, concentração, técnica utilizada, FISPQ e LTCAT",
-            "fundamento": (
-                "Agentes químicos devem ser analisados conforme substância, composição, forma de contato, habitualidade "
-                "e metodologia. A eficácia do EPI deve ser comprovada de forma concreta."
-            ),
-            "enquadramento": "TIPO QUÍMICO IDENTIFICADO — exige análise do produto/substância e da forma de exposição."
-        })
-
-    if "biologico" in tipos_norm and not any("biologic" in normalizar(a["grupo"]) for a in agentes):
-        agentes.append({
-            "agente": "biologicos_generico",
-            "grupo": "Biológico",
-            "norma": "NR-15 Anexo 14",
-            "limite": "Qualitativo",
-            "metodologia": "Atividade descrita / risco de contato",
-            "fundamento": (
-                "NR-15, Anexo 14: agentes biológicos são avaliados qualitativamente, considerando risco de contato "
-                "com pacientes, material infectocontagiante, lixo urbano, esgoto, secreções, sangue, laboratórios, "
-                "hospitais e ambientes equivalentes."
-            ),
-            "enquadramento": "TIPO BIOLÓGICO IDENTIFICADO — análise qualitativa do risco ocupacional."
-        })
-
     return agentes
 
 
 
 def analisar_epi(texto, agentes):
-    texto_norm = normalizar(texto)
     conclusoes = []
-
-    tem_epi = "epi" in texto_norm or "15.7" in texto
-    tem_eficaz = "eficaz" in texto_norm or "sim" in texto_norm
-
-    if not tem_epi:
+    linhas = [
+        dados for dados in linhas_campo15_para_analise(texto).values()
+        if dados.get("15.3") and not valor_ausente_estrutural(dados.get("15.3"))
+    ]
+    if not linhas:
         conclusoes.append({
             "criticidade": "CRÍTICA",
-            "ponto": "EPI não localizado",
-            "analise": "Não foi localizada informação clara sobre EPI no texto extraído.",
+            "ponto": "Campo 15 não estruturado para análise de EPI",
+            "analise": "Não há linha confiável ligando fator de risco, EPC, EPI e CA.",
             "fundamento": BASE_LEGAL["epi"]["tema_213_tnu"] + " " + BASE_LEGAL["epi"]["nr06"],
-            "estrategia": "Solicitar PPP/LTCAT complementar, CA, fichas de EPI e prova de treinamento/fiscalização."
+            "estrategia": "Revisar o Campo 15 ou preencher manualmente a linha correspondente."
         })
         return conclusoes
 
-    for ag in agentes:
-        grupo = normalizar(ag.get("grupo", ""))
-        agente = ag.get("agente", "")
+    agentes_por_nome = {
+        normalizar(a.get("agente_original") or a.get("agente", "")): a for a in agentes
+    }
+    for indice, linha in enumerate(linhas, start=1):
+        fator = str(linha.get("15.3", "")).strip()
+        epi = normalizar_resposta_sn(linha.get("15.7", ""))
+        ca = str(linha.get("15.8", "")).strip()
+        tipo = normalizar(linha.get("15.2", ""))
+        agente_info = next(
+            (a for nome, a in agentes_por_nome.items() if nome and nome in normalizar(fator)),
+            None,
+        )
+        grupo = normalizar((agente_info or {}).get("grupo", "") or tipo)
+        ponto = f"Linha {indice} do Campo 15 — {fator}"
+
+        if not epi or epi not in {"Sim", "Não", "NA"}:
+            conclusoes.append({
+                "criticidade": "GRAVE",
+                "ponto": ponto,
+                "analise": "A resposta de EPI não foi extraída com segurança na mesma linha do agente.",
+                "fundamento": BASE_LEGAL["epi"]["tema_213_tnu"] + " " + BASE_LEGAL["epi"]["nr06"],
+                "estrategia": "Conferir o Campo 15.7 desta linha e preencher manualmente se necessário."
+            })
+            continue
 
         if "biologic" in grupo:
             conclusoes.append({
                 "criticidade": "CRÍTICA",
-                "ponto": "EPI x agente biológico",
+                "ponto": ponto,
                 "analise": "Para agentes biológicos, o EPI não afasta automaticamente a especialidade, dada a natureza qualitativa do risco.",
                 "fundamento": BASE_LEGAL["biologicos"]["tema_211_tnu"] + " " + BASE_LEGAL["biologicos"]["irdr15"],
                 "estrategia": "Defender risco ocupacional qualitativo e solicitar prova complementar se necessário."
             })
         elif "quim" in grupo:
             conclusoes.append({
-                "criticidade": "GRAVE" if tem_eficaz else "CRÍTICA",
-                "ponto": f"EPI x agente químico ({agente})",
+                "criticidade": "GRAVE" if epi == "Sim" else "CRÍTICA",
+                "ponto": ponto,
                 "analise": (
                     "Para agente químico, a eficácia do EPI exige prova concreta: CA adequado ao agente, validade, "
                     "fornecimento, treinamento, troca, higienização, fiscalização e compatibilidade com a forma de exposição."
@@ -5145,13 +5262,21 @@ def analisar_epi(texto, agentes):
         elif "fisic" in grupo:
             conclusoes.append({
                 "criticidade": "MODERADA",
-                "ponto": f"EPI x agente físico ({agente})",
+                "ponto": ponto,
                 "analise": (
                     "Para agente físico, a eficácia do EPI depende do agente específico. Em ruído acima do limite, "
                     "o EPI eficaz não descaracteriza automaticamente a especialidade."
                 ),
                 "fundamento": BASE_LEGAL["ruido"]["tema_555_stf"] + " " + BASE_LEGAL["epi"]["tema_213_tnu"],
                 "estrategia": "Conferir agente físico específico, metodologia, intensidade e eventual aplicação do Tema 555/STF."
+            })
+        if epi == "Sim" and not valor_nao_aplicavel_estrutural(ca) and not re.fullmatch(r"\d{3,8}(?:\s*[,/]\s*\d{3,8})*", ca):
+            conclusoes.append({
+                "criticidade": "GRAVE",
+                "ponto": f"{ponto} — CA",
+                "analise": "O EPI consta como eficaz, mas o CA da mesma linha não possui formato válido.",
+                "fundamento": BASE_LEGAL["epi"]["nr06"],
+                "estrategia": "Conferir o Campo 15.8 e a adequação do CA ao agente."
             })
 
     return conclusoes
@@ -5181,10 +5306,10 @@ def analisar_ltcat_responsavel(texto):
             "fundamento": BASE_LEGAL["responsavel"]["art_195_clt"] + " " + BASE_LEGAL["responsavel"]["in_128_285"],
             "estrategia": "Impugnar validade técnica do PPP e solicitar documento com responsável habilitado."
         })
-    elif responsavel.get("profissao") == "não identificada claramente":
+    elif responsavel.get("profissao") == "habilitação não confirmada":
         itens.append({
             "criticidade": "GRAVE",
-            "ponto": "Habilitação do responsável técnico não identificada claramente",
+            "ponto": "Habilitação do responsável técnico não confirmada",
             "analise": (
                 "Foi localizado responsável técnico no Campo 16, mas o texto extraído não permitiu confirmar "
                 "se ele é médico do trabalho ou engenheiro de segurança do trabalho."
@@ -5293,7 +5418,7 @@ def gerar_parecer(texto, trf):
             f"{responsavel['nome'] or 'nome não extraído'} | "
             f"CPF: {responsavel['cpf'] or 'não extraído'} | "
             f"Registro: {responsavel['registro'] or 'não extraído'} | "
-            f"Habilitação: {responsavel.get('profissao', 'não identificada claramente')}"
+            f"Habilitação: {responsavel.get('profissao', 'habilitação não confirmada')}"
         )
     linhas.append("")
 
@@ -5363,7 +5488,7 @@ def gerar_parecer(texto, trf):
                 f"  Dados extraídos: {responsavel['nome'] or 'nome não extraído'} | "
                 f"CPF: {responsavel['cpf'] or 'não extraído'} | "
                 f"Registro: {responsavel['registro'] or 'não extraído'} | "
-                f"Habilitação: {responsavel.get('profissao', 'não identificada claramente')}"
+                f"Habilitação: {responsavel.get('profissao', 'habilitação não confirmada')}"
             )
         linhas.append("- Recomenda-se conferência manual do registro profissional e do período de responsabilidade.")
     linhas.append("")
@@ -5933,6 +6058,9 @@ def preparar_texto_editavel(texto):
 st.title("📄 Raio-X do PPP – PróBenefício")
 st.caption("Análise campo a campo do PPP conforme IN 128/2022, Decreto 3.048/99, NR-15, Temas STF/STJ/TNU e IRDR/TRF4.")
 
+if "ocr_reprocessar_versao" not in st.session_state:
+    st.session_state["ocr_reprocessar_versao"] = 0
+
 if not ocr_imagem_disponivel():
     st.warning(
         "⚠️ OCR por imagem não disponível neste ambiente "
@@ -5944,6 +6072,10 @@ if not ocr_imagem_disponivel():
 with st.sidebar:
     st.header("Configuração")
     trf = st.selectbox("TRF de competência", ["TRF1", "TRF2", "TRF3", "TRF4", "TRF5", "TRF6"], index=3)
+    if st.button("Limpar cache / Reprocessar OCR", use_container_width=True):
+        st.cache_data.clear()
+        st.session_state["ocr_reprocessar_versao"] += 1
+        st.rerun()
     st.info("O sistema não armazena dados. A análise ocorre durante a sessão.")
 
 uploaded_file = st.file_uploader("Carregue o PPP em PDF", type=["pdf"])
@@ -5954,7 +6086,10 @@ texto_final = ""
 
 if uploaded_file:
     with st.spinner("📄 Lendo PDF e extraindo texto..."):
-        texto_bruto = extrair_texto_pdf(uploaded_file)
+        texto_bruto = extrair_texto_pdf(
+            uploaded_file,
+            versao_execucao=str(st.session_state["ocr_reprocessar_versao"]),
+        )
     with st.spinner("🔍 Preparando campos e placeholders..."):
         # Etapa 1: preparação do bloco editável (pré-análise)
         texto_final = preparar_texto_editavel(texto_bruto)
