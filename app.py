@@ -5,6 +5,7 @@ import requests
 import hashlib
 import os
 import pprint
+import copy
 from datetime import datetime
 from io import BytesIO
 
@@ -29,6 +30,32 @@ try:
 except Exception:
     pytesseract = None
     convert_from_bytes = None
+
+
+if pytesseract is not None:
+    _tesseract_candidatos = [
+        os.environ.get("TESSERACT_CMD", ""),
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    ]
+    for _tesseract_cmd in _tesseract_candidatos:
+        if _tesseract_cmd and os.path.isfile(_tesseract_cmd):
+            pytesseract.pytesseract.tesseract_cmd = _tesseract_cmd
+            break
+
+    _tessdata_local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tessdata")
+    if os.path.isdir(_tessdata_local):
+        os.environ["TESSDATA_PREFIX"] = _tessdata_local
+
+
+def ocr_imagem_disponivel():
+    if pytesseract is None or (convert_from_bytes is None and fitz is None):
+        return False
+    try:
+        pytesseract.get_tesseract_version()
+        return True
+    except Exception:
+        return False
 
 
 st.set_page_config(
@@ -849,7 +876,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-06-03-adaptativo-v15-delimitacao-campo15"
+OCR_PIPELINE_VERSION = "2026-06-11-adaptativo-v18-ocr-portatil"
 MARCADOR_METADADOS_OCR = "=== METADADOS INTERNOS DA EXTRAÇÃO OCR ==="
 MARCADOR_DIAGNOSTICO_INTERNO = "=== DIAGNÓSTICO INTERNO DO PIPELINE ==="
 
@@ -936,9 +963,9 @@ def extrair_texto_pdf_bytes(pdf_bytes, pipeline_version):
     _tem_estrutura = any(t in _texto_norm_ocr for t in _termos_estruturais)
     _texto_curto = len(re.sub(r"\s+", "", texto)) < 300
     precisa_ocr = _texto_curto or not _tem_estrutura
-    if precisa_ocr and pytesseract is not None and convert_from_bytes is not None:
+    if precisa_ocr and pytesseract is not None and (convert_from_bytes is not None or fitz is not None):
         try:
-            imagens = convert_from_bytes(pdf_bytes, dpi=250)
+            imagens = converter_pdf_em_imagens(pdf_bytes, dpi=250)
             for img in imagens:
                 config = "--psm 6 -c preserve_interword_spaces=1"
                 try:
@@ -964,6 +991,42 @@ def extrair_texto_pdf_bytes(pdf_bytes, pipeline_version):
         f"extraida_em: {datetime.now().isoformat(timespec='seconds')}\n"
     )
     return texto + metadados
+
+
+def converter_pdf_em_imagens(pdf_bytes, dpi=250):
+    """
+    Converte o PDF em imagens para OCR.
+
+    Usa pdf2image/Poppler quando disponível e recorre ao PyMuPDF, que não
+    exige executável externo, quando o Poppler não está instalado.
+    """
+    erro_pdf2image = None
+    if convert_from_bytes is not None:
+        try:
+            return convert_from_bytes(pdf_bytes, dpi=dpi)
+        except Exception as exc:
+            erro_pdf2image = exc
+
+    if fitz is not None:
+        from PIL import Image
+
+        imagens = []
+        escala = dpi / 72
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            matriz = fitz.Matrix(escala, escala)
+            for pagina in doc:
+                pixmap = pagina.get_pixmap(matrix=matriz, alpha=False)
+                imagem = Image.open(BytesIO(pixmap.tobytes("png")))
+                imagens.append(imagem.copy())
+                imagem.close()
+        finally:
+            doc.close()
+        return imagens
+
+    if erro_pdf2image is not None:
+        raise RuntimeError(f"Falha ao renderizar o PDF com pdf2image: {erro_pdf2image}")
+    raise RuntimeError("Nenhum renderizador de PDF está disponível para o OCR.")
 
 
 def ocr_regioes_tabeladas_ppp(imagens):
@@ -3445,21 +3508,160 @@ def motivo_rejeicao_linha_15(dados):
     periodo = str(dados.get("15.1", ""))
     if periodo and not periodo_ambiental_valido_15(periodo):
         return "15.1 não é período ambiental válido"
-    fator_norm = normalizar(str(dados.get("15.3", "")))
-    if fator_norm and not fator_ruido_15(dados.get("15.3", "")):
-        if re.search(r"\bdB\b", str(dados.get("15.4", "")), flags=re.IGNORECASE):
-            return "agente não-ruído recebeu intensidade de ruído"
-        if re.search(r"(?:Decibel|NHO[-\s]*01|NHO\s*01|Medi[cç\?].{0,4}o\s+de\s+NPS)", str(dados.get("15.5", "")), flags=re.IGNORECASE):
-            return "agente não-ruído recebeu técnica de ruído"
-    ca = str(dados.get("15.8", ""))
-    if ca and normalizar(ca) != "na" and not re.fullmatch(r"\d{3,8}(?:\s*[,/]\s*\d{3,8})*", ca):
-        return "CA inválido para 15.8"
     return ""
 
 
 def fator_ruido_15(valor):
     v = normalizar(str(valor or ""))
     return "ruido" in v or bool(re.search(r"\bru.?do\b", str(valor or ""), flags=re.IGNORECASE))
+
+
+def recomputar_status_linha_composta(linha, campo_numero):
+    incompletos = []
+    for numero, dados in linha.get("subcampos", {}).items():
+        valor = dados.get("valor", "")
+        campo_159_global = campo_numero == "15" and linha.get("linha") not in {None, 1} and (
+            numero == "15.9" or numero.startswith("15.9 [")
+        )
+        if valor_ausente_estrutural(valor) and not campo_159_global:
+            incompletos.append(numero)
+    valores_linha = [d.get("valor", "") for d in linha.get("subcampos", {}).values() if d.get("valor")]
+    linha["campos_incompletos"] = incompletos
+    linha["status"] = "INCOMPLETO" if incompletos else "CONFORME/LOCALIZADO"
+    if not incompletos and valores_linha and all(valor_nao_aplicavel_estrutural(v) for v in valores_linha):
+        linha["status"] = "LOCALIZADO — NÃO APLICÁVEL"
+    return linha
+
+
+def validar_linhas_campo15_para_parecer(linhas, texto_original="", contexto=""):
+    validadas = []
+    rejeitadas = []
+    cnae_doc = extrair_cnae(texto_original or "")
+    cnae_digitos = re.sub(r"\D", "", cnae_doc or "")
+    for linha in linhas:
+        linha = copy.deepcopy(linha)
+        sub = linha.get("subcampos", {})
+        dados = {numero: item.get("valor", "") for numero, item in sub.items()}
+        dados["_linha_original"] = linha.get("valor_original", "")
+        motivo = motivo_rejeicao_linha_15(dados)
+        if motivo:
+            rejeitadas.append({
+                "linha": linha.get("linha"),
+                "origem": contexto or "montar_linhas_compostas",
+                "validacao_final": "REJEITADA",
+                "motivo": motivo,
+                "valor_original": re.sub(r"\s+", " ", str(linha.get("valor_original", "")))[:260],
+            })
+            continue
+
+        linha_original = str(linha.get("valor_original", ""))
+        if re.search(r"\s-\s*-\s*-\s*$|\s-\s*-\s*-\s+", linha_original):
+            if "15.6" in sub:
+                sub["15.6"]["valor"] = "NA"
+            if "15.7" in sub:
+                sub["15.7"]["valor"] = "NA"
+            if "15.8" in sub:
+                sub["15.8"]["valor"] = "NA"
+        valor_156 = str(sub.get("15.6", {}).get("valor", ""))
+        if re.search(r"\bNR\s*[-]?\s*15\b|anexo\s*0?1", valor_156, flags=re.IGNORECASE):
+            tecnica = str(sub.get("15.5", {}).get("valor", "")).strip()
+            if tecnica and valor_156.strip() not in tecnica:
+                sub["15.5"]["valor"] = f"{tecnica} - {valor_156.strip()}"
+            elif not tecnica:
+                sub["15.5"]["valor"] = valor_156.strip()
+            if "15.6" in sub:
+                sub["15.6"]["valor"] = "NA"
+            if "15.7" in sub:
+                sub["15.7"]["valor"] = "NA"
+            if "15.8" in sub:
+                sub["15.8"]["valor"] = "NA"
+
+        fator = sub.get("15.3", {}).get("valor", "")
+        if fator and not fator_ruido_15(fator):
+            if re.search(r"\bdB\b", str(sub.get("15.4", {}).get("valor", "")), flags=re.IGNORECASE):
+                sub["15.4"]["valor"] = ""
+                linha.setdefault("_validacao_final_campo15", []).append("15.4 limpo: agente não-ruído com dB")
+            if re.search(r"(?:Decibel|Decibelimetro|NHO[-\s]*01|NHO\s*01|Medi[cçaã\?]{2,8}\s+de\s+NPS|NR[-\s]*15\s*,?\s*anexo\s*0?1)", str(sub.get("15.5", {}).get("valor", "")), flags=re.IGNORECASE):
+                sub["15.5"]["valor"] = ""
+                linha.setdefault("_validacao_final_campo15", []).append("15.5 limpo: agente não-ruído com técnica de ruído")
+
+        ca = str(sub.get("15.8", {}).get("valor", "")).strip()
+        ca_norm = normalizar(ca)
+        ca_digitos = re.sub(r"\D", "", ca)
+        if ca and ca_norm != "na":
+            ca_invalido = (
+                not re.fullmatch(r"\d{3,8}(?:\s*[,/]\s*\d{3,8})*", ca)
+                or ca_digitos in {"8299", "2829", "0162", "4929"}
+                or bool(cnae_digitos and ca_digitos and ca_digitos in cnae_digitos)
+            )
+            if ca_invalido:
+                sub["15.8"]["valor"] = ""
+                linha.setdefault("_validacao_final_campo15", []).append("15.8 rejeitado por ser inválido ou parte do CNAE")
+
+        minimo = bool(
+            sub.get("15.3", {}).get("valor")
+            and not valor_ausente_estrutural(sub.get("15.3", {}).get("valor"))
+        )
+        if not minimo:
+            rejeitadas.append({
+                "linha": linha.get("linha"),
+                "origem": contexto or "montar_linhas_compostas",
+                "validacao_final": "REJEITADA",
+                "motivo": "linha sem fator de risco mínimo confiável",
+                "valor_original": re.sub(r"\s+", " ", str(linha.get("valor_original", "")))[:260],
+            })
+            continue
+        linha["subcampos"] = sub
+        validadas.append(recomputar_status_linha_composta(linha, "15"))
+    if rejeitadas and validadas:
+        validadas[0]["_linhas_15_rejeitadas_final"] = rejeitadas[:10]
+    return validadas
+
+
+def validar_campo18_para_parecer(linhas, texto_original=""):
+    validadas = []
+    termos_proibidos = (
+        "circular conjunto", "memorando", "conselho federal de medicina", "observacoes",
+        "observações", "carimbo", "assinatura", "monitoracao biologica", "monitoração biológica",
+        "resultados de monitoracao", "resultados de monitoração",
+    )
+    fonte_segura = re.split(
+        r"\b(?:Observa[cç][oõ]es|As informa[cç][oõ]es referentes|Memorando[-\s]Circular)\b",
+        janela_representante_legal(texto_original or ""),
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    for linha in linhas:
+        linha = copy.deepcopy(linha)
+        sub = linha.get("subcampos", {})
+        nome = str(sub.get("18.2", {}).get("valor", "")).strip()
+        if nome and any(t in normalizar(nome) for t in termos_proibidos):
+            sub["18.2"]["valor"] = ""
+            linha.setdefault("_validacao_final_campo18", []).append("18.2 rejeitado: texto de observações/memorando")
+        if nome and not nome_representante_valido(nome):
+            sub["18.2"]["valor"] = ""
+            linha.setdefault("_validacao_final_campo18", []).append("18.2 rejeitado: nome humano inválido")
+        if not sub.get("18.2", {}).get("valor") and fonte_segura:
+            candidatos_nome = re.findall(
+                r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{2,}(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{2,}){1,5}\b|"
+                r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+){1,5}\b",
+                fonte_segura,
+            )
+            candidatos_nome = [limpar_nome_representante(n) for n in candidatos_nome]
+            candidatos_nome = [n for n in candidatos_nome if nome_representante_valido(n)]
+            if candidatos_nome:
+                sub["18.2"]["valor"] = candidatos_nome[-1]
+        cpf = str(sub.get("18.1", {}).get("valor", "")).strip()
+        if cpf:
+            cpf_norm = normalizar_cpf_nit_visual(cpf)
+            sub["18.1"]["valor"] = cpf_norm
+        if not sub.get("18.1", {}).get("valor") and fonte_segura:
+            m_cpf = re.search(r"[-<\)]?\d{3}[\.\,]?\d{3,6}[\.\,\:]?\d{2}\b", fonte_segura)
+            if m_cpf:
+                sub["18.1"]["valor"] = normalizar_cpf_nit_visual(m_cpf.group(0))
+        linha["subcampos"] = sub
+        validadas.append(recomputar_status_linha_composta(linha, "18"))
+    return validadas
 
 
 def periodo_ambiental_herdado(texto_bloco, texto_total):
@@ -4431,28 +4633,26 @@ def montar_linhas_compostas(texto, campo):
                 bloquear_fallback_16_isolado = True
 
     if campo["numero"] == "15":
-        for idx, dados in extrair_linhas_15_ocr(texto).items():
+        linhas_15_extraidas = extrair_linhas_15_ocr(texto)
+        for idx, dados in linhas_15_extraidas.items():
             manuais.setdefault(idx, {})
             for k, v in dados.items():
                 if not v:
                     continue
+                if k.startswith("_"):
+                    manuais[idx].setdefault(k, v)
+                    continue
                 if k.startswith("15.") and not validar_valor_ocr_soc(k, v):
                     continue
                 manuais[idx].setdefault(k, v)
-        tipos = extrair_tipo_15_2(texto)
-        epcs = extrair_epc_15_6(texto)
         sub159 = {s["codigo"]: s.get("resposta", "") for s in extrair_subitens_159(texto)}
         if sub159 and manuais:
             primeira_linha = manuais[min(manuais)]
             for codigo, resposta in sub159.items():
                 if resposta and resposta != "não extraída":
                     primeira_linha.setdefault(codigo, resposta)
-        if (tipos or epcs or sub159) and not manuais:
+        if sub159 and not manuais and linhas_15_extraidas:
             manuais.setdefault(1, {})
-            if tipos:
-                manuais[1].setdefault("15.2", ", ".join(tipos))
-            if epcs:
-                manuais[1].setdefault("15.6", ", ".join(epcs))
             for codigo, resposta in sub159.items():
                 if resposta and resposta != "não extraída":
                     manuais[1].setdefault(codigo, resposta)
@@ -4577,7 +4777,7 @@ def montar_linhas_compostas(texto, campo):
             if nome or manual18:
                 manuais[1].setdefault("18.2", nome or manual18)
 
-    if not manuais and campo["numero"] not in {"16", "18"}:
+    if not manuais and campo["numero"] not in {"15", "16", "18"}:
         marcador_fim = {"13": "14", "14": "15", "15": "16", "16": "17", "18": None}.get(campo["numero"])
         candidatas = candidato_linha_tabela(texto, campo["nome"], marcador_fim)
         for idx, linha in enumerate(candidatas, start=1):
@@ -4616,6 +4816,25 @@ def montar_linhas_compostas(texto, campo):
             "status": status_linha,
             "campos_incompletos": incompletos,
         })
+    if campo["numero"] == "15":
+        linhas = validar_linhas_campo15_para_parecer(linhas, texto, "montar_linhas_compostas")
+        if not linhas:
+            linhas = [{
+                "linha": 1,
+                "valor_original": "Campo 15 não estruturado com segurança; fallback amplo bloqueado",
+                "subcampos": {numero: {"nome": nome, "valor": ""} for numero, nome in subcampos},
+                "status": "INCOMPLETO",
+                "campos_incompletos": [numero for numero, _ in subcampos],
+            }]
+            linhas[0]["_linhas_15_rejeitadas_final"] = [{
+                "linha": 1,
+                "origem": "montar_linhas_compostas",
+                "validacao_final": "REJEITADA",
+                "motivo": "Campo 15 não estruturado com segurança; fallback amplo bloqueado",
+                "valor_original": "",
+            }]
+    if campo["numero"] == "18":
+        linhas = validar_campo18_para_parecer(linhas, texto)
     return linhas
 
 
@@ -5420,6 +5639,60 @@ def formatar_diagnostico(objeto, limite=2600):
     return texto[:limite].rstrip() + "\n... [diagnóstico truncado]"
 
 
+def auditar_campo15_para_diagnostico(linhas):
+    auditoria = []
+    rejeitadas = []
+    for linha in linhas or []:
+        rejeitadas.extend(linha.get("_linhas_15_rejeitadas_final", []) or [])
+        validacoes = linha.get("_validacao_final_campo15", []) or []
+        status = linha.get("status", "")
+        validacao = "OK" if status == "CONFORME/LOCALIZADO" and not validacoes else status or "PENDENTE"
+        auditoria.append({
+            "linha": linha.get("linha"),
+            "origem": linha.get("_origem") or linha.get("_origem_campo15") or "montar_linhas_compostas",
+            "validacao": validacao,
+            "motivo": validacoes or linha.get("campos_incompletos", []) or "",
+            "valor_original": linha.get("valor_original", ""),
+        })
+    for rejeitada in rejeitadas:
+        auditoria.append({
+            "linha": rejeitada.get("linha"),
+            "origem": rejeitada.get("origem", "validacao_final_campo15"),
+            "validacao": rejeitada.get("validacao_final", "REJEITADA"),
+            "motivo": rejeitada.get("motivo", ""),
+            "valor_original": rejeitada.get("valor_original", ""),
+        })
+    return auditoria or "Campo 15 sem linhas estruturadas para auditoria."
+
+
+def auditar_campo18_para_diagnostico(linhas):
+    auditoria = {"18.1": [], "18.2": []}
+    for linha in linhas or []:
+        sub = linha.get("subcampos", {})
+        validacoes = linha.get("_validacao_final_campo18", []) or []
+        origem = linha.get("_origem") or linha.get("_origem_campo18") or "montar_linhas_compostas"
+        for numero in ("18.1", "18.2"):
+            valor = sub.get(numero, {}).get("valor", "")
+            validacao = "OK" if valor else "INCOMPLETO"
+            auditoria[numero].append({
+                "linha": linha.get("linha"),
+                "valor": valor,
+                "origem": origem,
+                "validacao": validacao,
+                "motivo": validacoes or linha.get("campos_incompletos", []) or "",
+            })
+    for numero in ("18.1", "18.2"):
+        if not auditoria[numero]:
+            auditoria[numero].append({
+                "linha": None,
+                "valor": "",
+                "origem": "montar_linhas_compostas",
+                "validacao": "INCOMPLETO",
+                "motivo": "Campo 18 sem linha estruturada para auditoria.",
+            })
+    return auditoria
+
+
 def metadados_app_em_execucao():
     caminho = os.path.abspath(__file__)
     try:
@@ -5591,6 +5864,12 @@ def gerar_bloco_diagnostico_interno(texto_analise, campos, faltantes, metadados_
         "--- montar_linhas_compostas ---",
         formatar_diagnostico(compostos),
         "",
+        "=== AUDITORIA CAMPO 15 ===",
+        formatar_diagnostico(auditar_campo15_para_diagnostico(compostos.get("15", [])), limite=5200),
+        "",
+        "=== AUDITORIA CAMPO 18 ===",
+        formatar_diagnostico(auditar_campo18_para_diagnostico(compostos.get("18", [])), limite=2600),
+        "",
         "--- gerar_placeholders ---",
         formatar_diagnostico(faltantes),
         "",
@@ -5654,10 +5933,10 @@ def preparar_texto_editavel(texto):
 st.title("📄 Raio-X do PPP – PróBenefício")
 st.caption("Análise campo a campo do PPP conforme IN 128/2022, Decreto 3.048/99, NR-15, Temas STF/STJ/TNU e IRDR/TRF4.")
 
-if pytesseract is None or convert_from_bytes is None:
+if not ocr_imagem_disponivel():
     st.warning(
         "⚠️ OCR por imagem não disponível neste ambiente "
-        "(Tesseract/pdf2image não instalado). PDFs escaneados "
+        "(motor Tesseract ou renderizador de PDF não localizado). PDFs escaneados "
         "podem ter leitura incompleta. Use PDF com texto "
         "selecionável para melhor resultado."
     )
