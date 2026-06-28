@@ -1,3 +1,4 @@
+
 import streamlit as st
 import re
 import unicodedata
@@ -920,7 +921,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-06-27-adaptativo-v29-base-central-ltcat"
+OCR_PIPELINE_VERSION = "2026-06-28-adaptativo-v31-na-sem-criticidade"
 MARCADOR_METADADOS_OCR = "=== METADADOS INTERNOS DA EXTRAÇÃO OCR ==="
 MARCADOR_DIAGNOSTICO_INTERNO = "=== DIAGNÓSTICO INTERNO DO PIPELINE ==="
 
@@ -2906,7 +2907,10 @@ def normalizar_cbo_ocr(valor):
 
 def valor_nao_aplicavel_estrutural(valor):
     v = normalizar(str(valor or "")).strip()
-    return v in {"na", "n/a", "nao aplicavel", "nao se aplica", "-", "sem risco", "ausente"}
+    return v in {
+        "na", "n/a", "n.a.", "n a", "nao aplicavel", "nao se aplica",
+        "-", "sem risco",
+    }
 
 
 def normalizar_resposta_sn(valor):
@@ -5421,6 +5425,23 @@ def linhas_campo15_para_analise(texto):
     )
 
 
+def linha_campo15_apenas_avaliada_sem_exposicao(linha):
+    """
+    Linha de inventário sem elemento técnico positivo.
+
+    Mantém o registro no editor, mas não o transforma em agente nocivo para
+    contagem, parecer, EPI ou base legal.
+    """
+    if not isinstance(linha, dict) or not str(linha.get("15.3", "") or "").strip():
+        return False
+    tecnicos_na = all(
+        valor_nao_aplicavel_estrutural(linha.get(codigo, ""))
+        for codigo in ("15.4", "15.5", "15.7", "15.8")
+    )
+    epc = normalizar_resposta_sn(linha.get("15.6", ""))
+    return tecnicos_na and epc in {"", "Não", "NA"}
+
+
 def corpus_agentes_campo15(texto):
     partes = []
     for dados in linhas_campo15_para_analise(texto).values():
@@ -5494,6 +5515,8 @@ def analisar_agentes(texto):
     agentes = []
     vistos = set()
     for indice, linha in linhas_campo15_para_analise(texto).items():
+        if linha_campo15_apenas_avaliada_sem_exposicao(linha):
+            continue
         rotulo = str(linha.get("15.3", "") or "").strip()
         if not rotulo or valor_ausente_estrutural(rotulo):
             continue
@@ -5602,6 +5625,8 @@ def analisar_epi(texto, agentes):
         normalizar(a.get("agente_original") or a.get("agente", "")): a for a in agentes
     }
     for indice, linha in enumerate(linhas, start=1):
+        if linha_campo15_apenas_avaliada_sem_exposicao(linha):
+            continue
         fator = str(linha.get("15.3", "")).strip()
         epi = normalizar_resposta_sn(linha.get("15.7", ""))
         ca = str(linha.get("15.8", "")).strip()
@@ -5626,6 +5651,10 @@ def analisar_epi(texto, agentes):
                 "fundamento": BASE_LEGAL["epi"]["tema_213_tnu"] + " " + BASE_LEGAL["epi"]["nr06"],
                 "estrategia": "Conferir o Campo 15.7 desta linha e preencher manualmente se necessário."
             })
+            continue
+
+        if epi == "NA":
+            # NA é informação válida de não aplicabilidade, não falha de EPI.
             continue
 
         if "biologic" in grupo:
@@ -5789,6 +5818,11 @@ def gerar_parecer(texto, trf, texto_ltcat=""):
 
     campos = analisar_campos(texto)
     agentes = analisar_agentes(texto)
+    tipos_15_2 = list(dict.fromkeys(
+        str(agente.get("grupo", "") or "").strip()
+        for agente in agentes
+        if str(agente.get("grupo", "") or "").strip()
+    ))
     insuficiencias_agentes = analisar_suficiencia_tecnica_agentes(agentes)
     epi = analisar_epi(texto, agentes)
     ltcat = analisar_ltcat_responsavel(texto, texto_ltcat)
@@ -5830,6 +5864,17 @@ def gerar_parecer(texto, trf, texto_ltcat=""):
 
     linhas.append("## 2. CHECKLIST TÉCNICO DO PPP")
     for c in campos_tecnicos:
+        if str(c.get("campo")) == "15":
+            nomes_ativos = [
+                agente.get("agente_original") or agente.get("agente")
+                for agente in agentes
+            ]
+            resumo_15 = ", ".join(nomes_ativos) if nomes_ativos else "nenhuma linha com elemento técnico positivo"
+            linhas.append(
+                f"- Campo 15 — {c['nome']}: {c['status']} | "
+                f"Linhas consideradas na análise nociva: {resumo_15}"
+            )
+            continue
         valor = f" | Valor: {c.get('valor')}" if c.get("valor") else ""
         linhas.append(f"- Campo {c['campo']} — {c['nome']}: {c['status']}{valor}")
     if campos_administrativos_pendentes:
@@ -6777,6 +6822,11 @@ def exibir_editor_campos_ppp(modelo_inicial, geracao):
 
     for numero in ["13", "14", "15", "16"]:
         st.subheader(f"Campo {numero} – {NOMES_CAMPOS_TABELA_EDITOR[numero]}")
+        if numero == "15":
+            st.caption(
+                "A tabela preserva todas as linhas do PPP para conferência. Linhas com parâmetros técnicos NA "
+                "e sem indicador positivo não serão contabilizadas como agentes nocivos no parecer."
+            )
         colunas = CAMPOS_TABELA_EDITOR[numero]
         configuracao = {
             codigo: st.column_config.TextColumn(f"{codigo} – {nome}")
@@ -6946,6 +6996,8 @@ def comparar_ppp_ltcat(texto_ppp, texto_ltcat):
 
     agentes_ppp = []
     for linha in linhas_campo15_para_analise(texto_ppp).values():
+        if linha_campo15_apenas_avaliada_sem_exposicao(linha):
+            continue
         agente = str(linha.get("15.3", "") or "").strip()
         if agente and not valor_ausente_estrutural(agente):
             agentes_ppp.append(agente)
