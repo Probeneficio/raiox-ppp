@@ -115,6 +115,22 @@ BASE_LEGAL = {
             "IN PRES/INSS 128/2022, art. 286: o PPP deve conter data de emissão e assinatura do representante legal, "
             "mantida a obrigatoriedade de assinatura para PPP físico."
         ),
+        "in_128_287": (
+            "IN PRES/INSS 128/2022, art. 287: a atividade especial depende de exposição que atenda aos critérios "
+            "quantitativos ou qualitativos aplicáveis e à relação de agentes do Anexo IV do RPS."
+        ),
+        "in_128_288": (
+            "IN PRES/INSS 128/2022, art. 288: a avaliação ambiental deve considerar as NHO da Fundacentro e os "
+            "limites do Anexo IV do Decreto 3.048/1999 ou, quando ausentes, os critérios da NR-15."
+        ),
+        "in_128_289": (
+            "IN PRES/INSS 128/2022, art. 289: devem ser observadas as normas vigentes na época da avaliação; "
+            "as metodologias da IN são exigíveis para avaliações realizadas a partir de 1º de janeiro de 2004."
+        ),
+        "in_128_290": (
+            "IN PRES/INSS 128/2022, art. 290: a neutralização por EPC exige funcionamento assegurado ao longo do "
+            "tempo e registros de especificação e manutenção; para ruído acima do limite, EPI eficaz não afasta o enquadramento."
+        ),
         "sumula_68_tnu": (
             "Súmula 68 da TNU: o laudo pericial ou PPP deve retratar as condições de trabalho à época em que "
             "a atividade foi exercida. Laudo extemporâneo exige cautela e coerência com o período analisado."
@@ -167,6 +183,37 @@ BASE_LEGAL = {
             "NR-01, item 1.5.5.1.2: deve ser observada a hierarquia das medidas de proteção, priorizando medidas "
             "coletivas, administrativas ou organizacionais antes do EPI individual."
         ),
+    },
+    "tecnicas": {
+        "nr09": (
+            "NR-09: estabelece requisitos para avaliação e controle das exposições ocupacionais a agentes físicos, "
+            "químicos e biológicos, integrados ao inventário de riscos e ao plano de ação do PGR."
+        ),
+        "calor": (
+            "NR-15, Anexo 3, e NHO-06 da Fundacentro: a exposição ocupacional ao calor deve ser avaliada por IBUTG, "
+            "considerando taxa metabólica, condições de exposição e metodologia vigente na data da avaliação."
+        ),
+        "vibracao_vci": (
+            "NR-15, Anexo 8, NR-09 e NHO-09 da Fundacentro: a vibração de corpo inteiro exige avaliação quantitativa "
+            "com método, parâmetros e período representativo da exposição."
+        ),
+        "vibracao_vmb": (
+            "NR-15, Anexo 8, NR-09 e NHO-10 da Fundacentro: a vibração de mãos e braços exige avaliação quantitativa "
+            "com método, parâmetros e período representativo da exposição."
+        ),
+        "ruido_impacto": (
+            "NR-15, Anexo 2: ruído de impacto deve ser identificado e avaliado pelos critérios próprios do anexo, "
+            "sem ser confundido com ruído contínuo ou intermitente."
+        ),
+    },
+    "campos_ppp": {
+        "identificacao": "IN 128/2022, art. 281; Decreto 3.048/99, art. 68.",
+        "lotacao": "IN 128/2022, arts. 282 e 283. A lotação deve vincular período, setor, cargo, CBO e GFIP/eSocial.",
+        "profissiografia": "IN 128/2022, art. 283, §1º. A profissiografia deve descrever atividades com clareza e habitualidade.",
+        "ambiental": "IN 128/2022, arts. 284 e 287 a 289. Os registros ambientais devem preservar agente, parâmetros e metodologia.",
+        "epi": "IN 128/2022, arts. 290 e 291; NR-01; NR-06; Tema 213/TNU; IRDR 15/TRF4.",
+        "responsavel": "IN 128/2022, art. 285; CLT, art. 195. Os registros ambientais devem possuir responsável habilitado.",
+        "emissao": "IN 128/2022, art. 286; IN 141/2022.",
     },
     "quimicos": {
         "tema_1083_stj": (
@@ -590,13 +637,7 @@ def selecionar_base_tribunal(trf, agentes, texto):
     tem_quimico = any("quim" in g for g in grupos)
     tem_biologico = any("biologic" in g for g in grupos)
 
-    tem_ruido = (
-        "ruido" in texto_norm
-        or "ruído" in texto.lower()
-        or any("ruido" in n for n in nomes_agentes)
-        or "db" in texto_norm
-        or "dba" in texto_norm
-    )
+    tem_ruido = any("ruido" in n for n in nomes_agentes)
 
     tem_eletricidade = (
         "eletricidade" in texto_norm
@@ -617,13 +658,19 @@ def selecionar_base_tribunal(trf, agentes, texto):
 
     tem_auxilio = "auxilio-doenca" in texto_norm or "auxílio-doença" in texto.lower()
 
-    tem_periodo_pre_reforma = any(
-        ano in texto_norm
-        for ano in [
-            "1964", "1979", "1980", "1985", "1990", "1995", "1997",
-            "1999", "2003", "2007", "2010", "2015", "2018", "2019"
-        ]
-    )
+    tem_periodo_pre_reforma = False
+    for agente in agentes:
+        periodo = str(agente.get("periodo", "") or "")
+        datas_periodo = extrair_datas(periodo)
+        if not datas_periodo:
+            continue
+        try:
+            inicio = datetime.strptime(datas_periodo[0], "%d/%m/%Y")
+        except ValueError:
+            continue
+        if inicio < datetime(2019, 11, 13):
+            tem_periodo_pre_reforma = True
+            break
 
     if tem_ruido:
         bases.append(("STF Tema 555", BASE_TRIBUNAIS["NACIONAL"]["STF Tema 555"]))
@@ -633,8 +680,9 @@ def selecionar_base_tribunal(trf, agentes, texto):
     if tem_eletricidade:
         bases.append(("STJ Tema 534", BASE_TRIBUNAIS["NACIONAL"]["STJ Tema 534"]))
 
-    if tem_biologico or tem_quimico or tem_cancerigeno:
+    if tem_biologico or tem_cancerigeno:
         bases.append(("STJ Tema 1.090", BASE_TRIBUNAIS["NACIONAL"]["STJ Tema 1.090"]))
+    if tem_biologico or tem_quimico or tem_cancerigeno:
         bases.append(("CRPS Enunciado 11", BASE_TRIBUNAIS["NACIONAL"]["CRPS Enunciado 11"]))
         bases.append(("CRPS Enunciado 12", BASE_TRIBUNAIS["NACIONAL"]["CRPS Enunciado 12"]))
 
@@ -651,6 +699,13 @@ def selecionar_base_tribunal(trf, agentes, texto):
 
     if trf in BASE_TRIBUNAIS:
         for titulo, fundamento in BASE_TRIBUNAIS[trf].items():
+            titulo_norm = normalizar(titulo)
+            if titulo_norm == "sintese":
+                continue
+            if "irdr 15" in titulo_norm and not agentes:
+                continue
+            if "irdr 16" in titulo_norm and not tem_auxilio:
+                continue
             bases.append((f"{trf} — {titulo}", fundamento))
 
     unicos = []
@@ -675,8 +730,16 @@ AGENTES = {
         "termos": ["calor", "ibutg"],
         "norma": "NR-15 Anexo 3",
         "limite": "IBUTG conforme atividade e regime de trabalho",
-        "metodologia": "IBUTG",
-        "fundamento": "Calor exige avaliação quantitativa conforme NR-15 Anexo 3."
+        "metodologia": "IBUTG / NHO-06 da Fundacentro",
+        "fundamento": BASE_LEGAL["tecnicas"]["calor"] + " " + BASE_LEGAL["tecnicas"]["nr09"]
+    },
+    "ruido_impacto": {
+        "grupo": "Físico",
+        "termos": ["ruido de impacto", "ruído de impacto", "impacto", "pico de ruido", "pico de ruído"],
+        "norma": "NR-15 Anexo 2",
+        "limite": "Critérios próprios para ruído de impacto conforme a forma de medição informada",
+        "metodologia": "Avaliação específica de ruído de impacto",
+        "fundamento": BASE_LEGAL["tecnicas"]["ruido_impacto"] + " " + BASE_LEGAL["geral"]["in_128_288"]
     },
     "frio": {
         "grupo": "Físico",
@@ -727,12 +790,7 @@ AGENTES = {
         "norma": "NR-15 Anexos 11, 12 e 13, conforme substância e forma de exposição",
         "limite": "Avaliação conforme substância: quantitativa quando houver limite de tolerância; qualitativa quando aplicável",
         "metodologia": "LTCAT/laudo técnico com identificação da substância, forma de contato, concentração quando exigível e método de avaliação",
-        "fundamento": (
-            "NR-15: Anexos 11 e 12 tratam de agentes químicos quantitativos, com comparação a limites de tolerância. "
-            "Anexo 13 trata de agentes químicos qualitativos, em que a presença/exposição é juridicamente relevante. "
-            "Para agentes químicos, a simples indicação de EPI eficaz no PPP não afasta automaticamente a especialidade; "
-            "é necessária análise concreta da neutralização."
-        )
+        "fundamento": BASE_LEGAL["fumos_metalicos"]["fundamento"]
     },
     "poeiras": {
         "grupo": "Químico",
@@ -742,11 +800,7 @@ AGENTES = {
         "norma": "NR-15 Anexo 12 e normas técnicas de higiene ocupacional aplicáveis",
         "limite": "Avaliação quantitativa ou qualitativa conforme composição da poeira e presença de sílica livre cristalizada",
         "metodologia": "Amostragem ambiental, identificação da fração respirável/total e metodologia técnica compatível",
-        "fundamento": (
-            "NR-15, Anexo 12, trata de poeiras minerais e agentes relacionados. "
-            "A análise depende da composição da poeira, concentração, metodologia utilizada e habitualidade da exposição. "
-            "Quando houver sílica livre cristalizada ou agente cancerígeno, a análise deve ser reforçada."
-        )
+        "fundamento": BASE_LEGAL["poeiras"]["fundamento"]
     },
     "oleos_minerais": {
         "grupo": "Químico",
@@ -757,10 +811,7 @@ AGENTES = {
         "norma": "NR-15 Anexo 13",
         "limite": "Avaliação qualitativa quando caracterizado contato habitual e permanente",
         "metodologia": "Laudo qualitativo com descrição da forma de contato e habitualidade",
-        "fundamento": (
-            "NR-15, Anexo 13: óleos minerais, hidrocarbonetos, graxas e substâncias equivalentes podem ser analisados "
-            "qualitativamente quando houver contato habitual e permanente. A eficácia do EPI exige comprovação concreta."
-        )
+        "fundamento": BASE_LEGAL["oleos_minerais"]["fundamento"]
     },
     "umidade": {
         "grupo": "Físico",
@@ -768,10 +819,7 @@ AGENTES = {
         "norma": "NR-15 Anexo 10",
         "limite": "Avaliação qualitativa",
         "metodologia": "Verificação qualitativa da exposição habitual a umidade excessiva",
-        "fundamento": (
-            "NR-15, Anexo 10: a exposição a umidade excessiva é avaliada qualitativamente, "
-            "considerando a atividade, o ambiente e a habitualidade da exposição."
-        )
+        "fundamento": BASE_LEGAL["umidade"]["fundamento"]
     },
     "tensoativos_domissanitarios": {
         "grupo": "Químico",
@@ -782,11 +830,7 @@ AGENTES = {
         "norma": "NR-15 Anexos 11 e 13, conforme composição química",
         "limite": "Avaliação conforme substância: qualitativa ou quantitativa conforme composição e forma de exposição",
         "metodologia": "LTCAT/laudo técnico com identificação dos produtos, composição, forma de contato, frequência e proteção utilizada",
-        "fundamento": (
-            "NR-15: agentes químicos devem ser analisados conforme substância, composição, forma de contato e habitualidade. "
-            "Produtos de limpeza, tensoativos e domissanitários exigem análise do LTCAT, FISPQ e das condições reais de exposição. "
-            "A eficácia do EPI deve ser comprovada de forma concreta."
-        )
+        "fundamento": BASE_LEGAL["tensoativos_domissanitarios"]["fundamento"]
     },
     "biologicos": {
         "grupo": "Biológico",
@@ -810,18 +854,18 @@ AGENTES.update({
     "vibracao_corpo_inteiro": {
         "grupo": "Físico",
         "termos": ["vibracao de corpo inteiro", "vibração de corpo inteiro", "vci", "vdvr"],
-        "norma": "NR-15 e normas técnicas de higiene ocupacional aplicáveis",
+        "norma": "NR-15 Anexo 8; NR-09; NHO-09 da Fundacentro",
         "limite": "Critério técnico conforme intensidade e metodologia informadas no PPP/LTCAT",
         "metodologia": "Avaliação de vibração de corpo inteiro, com indicação de método, intensidade e período",
-        "fundamento": "Agente físico identificado no Campo 15; exige conferência de intensidade, método técnico e habitualidade."
+        "fundamento": BASE_LEGAL["tecnicas"]["vibracao_vci"] + " " + BASE_LEGAL["geral"]["in_128_288"]
     },
     "vibracao_maos_bracos": {
         "grupo": "Físico",
         "termos": ["vibracao de maos e bracos", "vibração de mãos e braços", "vmb", "aren"],
-        "norma": "NR-15 e normas técnicas de higiene ocupacional aplicáveis",
+        "norma": "NR-15 Anexo 8; NR-09; NHO-10 da Fundacentro",
         "limite": "Critério técnico conforme intensidade e metodologia informadas no PPP/LTCAT",
         "metodologia": "Avaliação de vibração de mãos e braços, com indicação de método, intensidade e período",
-        "fundamento": "Agente físico identificado no Campo 15; exige conferência de intensidade, método técnico e habitualidade."
+        "fundamento": BASE_LEGAL["tecnicas"]["vibracao_vmb"] + " " + BASE_LEGAL["geral"]["in_128_288"]
     },
     "radiacoes_nao_ionizantes": {
         "grupo": "Físico",
@@ -876,7 +920,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-06-27-adaptativo-v27-interpretacao-tecnica"
+OCR_PIPELINE_VERSION = "2026-06-27-adaptativo-v29-base-central-ltcat"
 MARCADOR_METADADOS_OCR = "=== METADADOS INTERNOS DA EXTRAÇÃO OCR ==="
 MARCADOR_DIAGNOSTICO_INTERNO = "=== DIAGNÓSTICO INTERNO DO PIPELINE ==="
 
@@ -2631,13 +2675,11 @@ def analisar_campos_compostos_159_16(texto):
 
 
 FUNDAMENTO_CAMPOS_ESTRUTURADOS = {
-    "identificacao": "IN 128/2022, art. 281; Decreto 3.048/99, art. 68.",
-    "lotacao": "IN 128/2022, arts. 282 e 283. A lotação deve permitir vincular período, setor, cargo, CBO e GFIP/eSocial.",
-    "profissiografia": "IN 128/2022, art. 283, §1º. A profissiografia deve descrever atividades com clareza e habitualidade.",
-    "ambiental": "IN 128/2022, art. 284. Os registros ambientais devem indicar período, agente, intensidade, técnica, EPC, EPI e CA.",
-    "epi": "IN 128/2022, art. 284, IX; NR-01; NR-06; Tema 213/TNU; IRDR 15/TRF4.",
-    "responsavel": "IN 128/2022, art. 285; CLT, art. 195. Os registros ambientais devem estar vinculados a responsável técnico habilitado.",
-    "emissao": "IN 128/2022, art. 286; IN 141/2022.",
+    chave: BASE_LEGAL["campos_ppp"][chave]
+    for chave in [
+        "identificacao", "lotacao", "profissiografia", "ambiental",
+        "epi", "responsavel", "emissao",
+    ]
 }
 
 
@@ -2989,6 +3031,7 @@ def inferir_fator_risco_15(texto):
     mapa = [
         (["ruido previdenciario"], "Ruído previdenciário"),
         (["ruido trabalhista"], "Ruído trabalhista"),
+        (["ruido de impacto", "pico de ruido"], "Ruído de impacto"),
         (["ruido continuo", "ruido intermitente", "ruido"], "Ruído"),
         (["radiacao solar", "radiação solar"], "Radiação solar"),
         (["radiacoes nao ionizantes", "radiacao nao ionizante", "radiações não ionizantes"], "Radiações não ionizantes"),
@@ -3045,6 +3088,7 @@ def extrair_agentes_detectados_campo15(texto):
     agentes = []
     regras = [
         ("Radiações não ionizantes", ["radiacoes nao ionizantes", "radiacao nao ionizante", "radiações não ionizantes", "radiação não ionizante", "onizantes"]),
+        ("Ruído de impacto", ["ruido de impacto", "ruído de impacto", "pico de ruido", "pico de ruído"]),
         ("Ruído contínuo/intermitente", ["ruido continuo", "ruido intermitente", "ruido", "ruído", "decibel", "db(a)", "db"]),
         ("Vibração de mãos e braços", ["vibracao de maos e bracos", "vibração de mãos e braços", "maos e bracos", "mãos e braços", "vmb", "mb)"]),
         ("Vibração de corpo inteiro", ["vibracao de corpo inteiro", "vibração de corpo inteiro", "vci", "vdvr"]),
@@ -3098,6 +3142,12 @@ def extrair_agentes_detectados_campo15(texto):
         agentes.remove("Ferro")
     if "Fumos metálicos (manganês)" in agentes and "Manganês" in agentes:
         agentes.remove("Manganês")
+    if (
+        "Ruído de impacto" in agentes
+        and "Ruído contínuo/intermitente" in agentes
+        and not any(x in t for x in ["ruido continuo", "ruido intermitente"])
+    ):
+        agentes.remove("Ruído contínuo/intermitente")
     return agentes
 
 
@@ -3109,6 +3159,8 @@ def chave_agente_para_rotulo(rotulo):
         return "vibracao_maos_bracos"
     if "vibracao de corpo" in r:
         return "vibracao_corpo_inteiro"
+    if "ruido de impacto" in r or "pico de ruido" in r:
+        return "ruido_impacto"
     if "ruido" in r:
         return "ruido"
     if "calor" in r:
@@ -5458,21 +5510,41 @@ def analisar_agentes(texto):
         item["epc"] = str(linha.get("15.6", "") or "").strip()
         item["epi"] = str(linha.get("15.7", "") or "").strip()
         item["ca"] = str(linha.get("15.8", "") or "").strip()
-        insuficiencias = []
-        if valor_nao_aplicavel_estrutural(item["intensidade"]):
-            insuficiencias.append("intensidade/concentração")
-        if valor_nao_aplicavel_estrutural(item["tecnica"]):
-            insuficiencias.append("metodologia")
-        item["insuficiencias"] = insuficiencias
-        item["situacao_tecnica"] = (
-            "DOCUMENTAÇÃO INSUFICIENTE" if insuficiencias else "PARÂMETROS TÉCNICOS INFORMADOS"
-        )
-        if insuficiencias:
+        parametros_na = []
+        falhas_documentais = []
+        for valor, descricao in (
+            (item["intensidade"], "intensidade/concentração"),
+            (item["tecnica"], "metodologia"),
+        ):
+            if valor_nao_aplicavel_estrutural(valor):
+                parametros_na.append(descricao)
+            elif valor_ausente_estrutural(valor):
+                falhas_documentais.append(descricao)
+        item["parametros_na"] = parametros_na
+        item["falhas_documentais"] = falhas_documentais
+        item["insuficiencias"] = parametros_na + falhas_documentais
+        item["fundamento"] = " ".join(filter(None, [
+            item.get("fundamento", ""),
+            BASE_LEGAL["geral"]["in_128_287"],
+            BASE_LEGAL["geral"]["in_128_288"],
+            BASE_LEGAL["geral"]["in_128_289"],
+            BASE_LEGAL["tecnicas"]["nr09"],
+        ]))
+        if falhas_documentais:
+            item["situacao_tecnica"] = "FALHA DOCUMENTAL A VERIFICAR"
             item["enquadramento"] = (
-                f"Agente informado no PPP, porém sem {', '.join(insuficiencias)}. "
-                "A exposição não pode ser considerada tecnicamente caracterizada apenas com os dados apresentados."
+                f"Agente informado no PPP, mas a linha está sem {', '.join(falhas_documentais)}. "
+                "É necessária conferência do PPP original para distinguir campo em branco de falha de leitura."
+            )
+        elif parametros_na:
+            item["situacao_tecnica"] = "AGENTE INFORMADO SEM CARACTERIZAÇÃO TÉCNICA"
+            item["enquadramento"] = (
+                "Agente informado no PPP. Os parâmetros técnicos de "
+                f"{', '.join(parametros_na)} constam como NA. A simples presença do agente não permite "
+                "concluir pela caracterização da exposição nociva nem, isoladamente, indica erro do PPP."
             )
         else:
+            item["situacao_tecnica"] = "AGENTE TECNICAMENTE CARACTERIZADO"
             item["enquadramento"] = (
                 f"Agente informado no Campo 15 com parâmetros técnicos: {item['intensidade']}; "
                 f"metodologia: {item['tecnica']}. O potencial enquadramento depende da comparação com o "
@@ -5491,14 +5563,14 @@ def analisar_agentes(texto):
 def analisar_suficiencia_tecnica_agentes(agentes):
     falhas = []
     for agente in agentes:
-        insuficiencias = agente.get("insuficiencias") or []
-        if not insuficiencias:
+        falhas_documentais = agente.get("falhas_documentais") or []
+        if not falhas_documentais:
             continue
         nome = agente.get("agente_original") or agente.get("agente") or "Agente"
         falhas.append({
             "criticidade": "GRAVE",
-            "nome": f"Campo 15 — documentação insuficiente — {nome}",
-            "falha": "Ausência de " + " e de ".join(insuficiencias) + ".",
+            "nome": f"Campo 15 — falha documental a verificar — {nome}",
+            "falha": "Campo em branco ou não localizado: " + " e ".join(falhas_documentais) + ".",
             "analise": (
                 "O agente aparece no PPP, mas a exposição não está tecnicamente caracterizada "
                 "porque faltam parâmetros essenciais na mesma linha."
@@ -5606,15 +5678,20 @@ def analisar_epi(texto, agentes):
                 "estrategia": "Conferir o Campo 15.8 e a adequação do CA ao agente."
             })
 
+    for conclusao in conclusoes:
+        conclusao["fundamento"] = " ".join(filter(None, [
+            conclusao.get("fundamento", ""),
+            BASE_LEGAL["geral"]["in_128_290"],
+        ]))
     return conclusoes
 
 
 
-def analisar_ltcat_responsavel(texto):
+def analisar_ltcat_responsavel(texto, texto_ltcat=""):
     texto_norm = normalizar(texto)
     itens = []
 
-    if "ltcat" not in texto_norm:
+    if "ltcat" not in texto_norm and not str(texto_ltcat or "").strip():
         itens.append({
             "criticidade": "GRAVE",
             "ponto": "LTCAT não localizado",
@@ -5700,7 +5777,7 @@ def coletar_base_legal_utilizada(falhas, agentes, epi, ltcat):
 
 
 @st.cache_data(show_spinner=False)
-def gerar_parecer(texto, trf):
+def gerar_parecer(texto, trf, texto_ltcat=""):
     texto = texto_para_analise_sem_diagnostico(texto)
     texto = limpar_placeholders_manuais_vazios(texto)
     datas = extrair_datas(texto)
@@ -5714,7 +5791,7 @@ def gerar_parecer(texto, trf):
     agentes = analisar_agentes(texto)
     insuficiencias_agentes = analisar_suficiencia_tecnica_agentes(agentes)
     epi = analisar_epi(texto, agentes)
-    ltcat = analisar_ltcat_responsavel(texto)
+    ltcat = analisar_ltcat_responsavel(texto, texto_ltcat)
 
     campos_administrativos_pendentes = [
         c for c in campos
@@ -6566,13 +6643,20 @@ def criar_modelo_editavel_ppp(texto_ocr):
                     registro["15.4"] = "; ".join(medicoes_ruido)
                 tecnica_partes = []
                 tecnica_atual = str(registro.get("15.5", "") or "").strip()
-                if tecnica_atual and not valor_nao_aplicavel_estrutural(tecnica_atual):
-                    tecnica_partes.append(tecnica_atual)
+                if "decibel" in normalizar(tecnica_atual) or "decibel" in texto_norm:
+                    tecnica_partes.append("Decibelímetro")
                 if re.search(r"NHO\s*[-–]?\s*0?1", texto_ocr, flags=re.IGNORECASE):
                     tecnica_partes.append("NHO-01")
                 if re.search(r"NR\s*[-–]?\s*15.{0,30}anexo\s*0?1", texto_ocr, flags=re.IGNORECASE | re.DOTALL):
                     tecnica_partes.append("NR-15, Anexo 01")
                 registro["15.5"] = " - ".join(dict.fromkeys(tecnica_partes)) or tecnica_atual
+
+                datas_medicao = set(re.findall(r"\d{2}/\d{2}/\d{4}", registro.get("15.4", "")))
+                inicio_periodo = re.search(r"\d{2}/\d{2}/\d{4}", str(registro.get("15.1", "")))
+                registros_15 = modelo["tabelas"].get("15", [])
+                periodo_base = str(registros_15[0].get("15.1", "") or "").strip() if registros_15 else ""
+                if inicio_periodo and inicio_periodo.group(0) in datas_medicao and periodo_base:
+                    registro["15.1"] = periodo_base
 
         especificos_fumos = [
             agente for agente in extrair_agentes_detectados_campo15(texto_ocr)
@@ -6855,12 +6939,84 @@ def gerar_pdf_parecer(relatorio):
     return pdf_bytes
 
 
+def comparar_ppp_ltcat(texto_ppp, texto_ltcat):
+    """Comparação preliminar e conservadora entre dados revisados do PPP e OCR do LTCAT."""
+    if not str(texto_ltcat or "").strip():
+        return []
+
+    agentes_ppp = []
+    for linha in linhas_campo15_para_analise(texto_ppp).values():
+        agente = str(linha.get("15.3", "") or "").strip()
+        if agente and not valor_ausente_estrutural(agente):
+            agentes_ppp.append(agente)
+    agentes_ltcat = extrair_agentes_detectados_campo15(texto_ltcat)
+    norm_ltcat = {normalizar(a) for a in agentes_ltcat}
+
+    resultados = []
+    for agente in dict.fromkeys(agentes_ppp):
+        chave = chave_agente_para_rotulo(agente)
+        localizado = any(
+            normalizar(agente) == candidato
+            or (chave and chave_agente_para_rotulo(candidato) == chave)
+            for candidato in norm_ltcat
+        )
+        resultados.append({
+            "item": f"Agente: {agente}",
+            "status": "COMPATÍVEL NO TEXTO EXTRAÍDO" if localizado else "NÃO LOCALIZADO NO OCR DO LTCAT",
+            "observacao": (
+                "O agente foi localizado nos dois documentos."
+                if localizado else
+                "A ausência no OCR não prova divergência; confira o LTCAT original."
+            ),
+        })
+
+    datas_ppp = extrair_datas(texto_ppp)
+    datas_ltcat = extrair_datas(texto_ltcat)
+    resultados.append({
+        "item": "Períodos e datas",
+        "status": "COMPARAÇÃO PRELIMINAR",
+        "observacao": (
+            f"PPP: {', '.join(datas_ppp) if datas_ppp else 'datas não localizadas'}; "
+            f"LTCAT: {', '.join(datas_ltcat) if datas_ltcat else 'datas não localizadas'}. "
+            "A cobertura integral do período deve ser confirmada no documento original."
+        ),
+    })
+
+    responsavel_ppp = extrair_responsavel_tecnico(texto_ppp)
+    responsavel_ltcat = extrair_responsavel_tecnico(texto_ltcat)
+    nome_ppp = responsavel_ppp.get("nome", "")
+    nome_ltcat = responsavel_ltcat.get("nome", "")
+    mesmo_nome = nome_ppp and nome_ltcat and normalizar(nome_ppp) == normalizar(nome_ltcat)
+    resultados.append({
+        "item": "Responsável técnico",
+        "status": "COMPATÍVEL" if mesmo_nome else "CONFERÊNCIA NECESSÁRIA",
+        "observacao": (
+            f"PPP: {nome_ppp or 'não localizado'}; LTCAT: {nome_ltcat or 'não localizado'}. "
+            "Responsáveis diferentes não significam irregularidade automática; confira períodos e habilitação."
+        ),
+    })
+    return resultados
+
+
+def anexar_comparacao_ltcat(relatorio, comparacao):
+    if not comparacao:
+        return relatorio
+    linhas = [str(relatorio or "").rstrip(), "", "## COMPARAÇÃO PRELIMINAR PPP × LTCAT"]
+    linhas.append(
+        "Esta comparação usa os campos revisados do PPP e o texto extraído do LTCAT. "
+        "Resultado não localizado por OCR não equivale a divergência documental."
+    )
+    for item in comparacao:
+        linhas.append(f"- {item['item']} — {item['status']}: {item['observacao']}")
+    return "\n".join(linhas).strip() + "\n"
+
+
 # ============================================================
 # INTERFACE STREAMLIT
 # ============================================================
 
 st.title("📄 Raio-X do PPP – PróBenefício")
-st.caption("Análise campo a campo do PPP conforme IN 128/2022, Decreto 3.048/99, NR-15, Temas STF/STJ/TNU e IRDR/TRF4.")
+st.caption("Análise campo a campo conforme IN 128/2022, NR-09, NR-15, NHO/Fundacentro e jurisprudência aplicável.")
 
 if "ocr_reprocessar_versao" not in st.session_state:
     st.session_state["ocr_reprocessar_versao"] = 0
@@ -6889,8 +7045,21 @@ with st.sidebar:
     st.info("O sistema não armazena dados. A análise ocorre durante a sessão.")
 
 uploaded_file = st.file_uploader("Carregue o PPP em PDF", type=["pdf"])
+ltcat_uploaded_file = st.file_uploader(
+    "LTCAT em PDF (opcional, para comparação preliminar)",
+    type=["pdf"],
+    key="ltcat_upload",
+)
 
 texto_manual = st.text_area("Ou cole o texto de um PPP quando não houver PDF", height=140)
+
+texto_ltcat_bruto = ""
+if ltcat_uploaded_file is not None:
+    with st.spinner("Lendo LTCAT para comparação..."):
+        texto_ltcat_bruto = extrair_texto_pdf_bytes(
+            ltcat_uploaded_file.getvalue(),
+            OCR_PIPELINE_VERSION + "-ltcat",
+        )
 
 texto_ocr_bruto = ""
 hash_fonte = ""
@@ -6960,7 +7129,11 @@ if st.button("🔄 Reanalisar PPP com campos revisados", use_container_width=Tru
     else:
         # A partir deste ponto o OCR bruto é deliberadamente ignorado.
         texto_para_analise = serializar_modelo_editavel_ppp(modelo_atual)
-        relatorio, campos, agentes, epi, ltcat, classificacao = gerar_parecer(texto_para_analise, trf)
+        relatorio, campos, agentes, epi, ltcat, classificacao = gerar_parecer(
+            texto_para_analise, trf, texto_ltcat_bruto
+        )
+        comparacao_ltcat = comparar_ppp_ltcat(texto_para_analise, texto_ltcat_bruto)
+        relatorio = anexar_comparacao_ltcat(relatorio, comparacao_ltcat)
 
         _cnae_extraido = extrair_cnae(texto_para_analise)
         _cnpj_extraido = re.search(
@@ -6999,10 +7172,14 @@ if st.button("🔄 Reanalisar PPP com campos revisados", use_container_width=Tru
             ]) + len(epi) + len(ltcat)
             st.metric("Alertas", falhas_count)
 
-        st.subheader("🔎 Agentes nocivos identificados")
+        st.subheader("🔎 Agentes informados no Campo 15")
         if agentes:
             for a in agentes:
-                st.write(f"- **{a['agente'].upper()}** ({a['grupo']}) — {a['enquadramento']}")
+                nome_agente = a.get("agente_original") or a["agente"]
+                st.write(
+                    f"- **{nome_agente.upper()}** ({a['grupo']}) — "
+                    f"**{a.get('situacao_tecnica', 'AGENTE INFORMADO')}**. {a['enquadramento']}"
+                )
         else:
             st.warning("Nenhum agente nocivo identificado automaticamente.")
 
@@ -7036,6 +7213,14 @@ if st.button("🔄 Reanalisar PPP com campos revisados", use_container_width=Tru
                     st.warning(f"Campo {c['campo']} — {c['nome']}: {c['criticidade']}")
                 else:
                     st.info(f"Campo {c['campo']} — {c['nome']}: {c['criticidade']}")
+
+        if comparacao_ltcat:
+            st.subheader("🔗 Comparação preliminar PPP × LTCAT")
+            for item in comparacao_ltcat:
+                if item["status"] in {"COMPATÍVEL", "COMPATÍVEL NO TEXTO EXTRAÍDO"}:
+                    st.success(f"{item['item']} — {item['status']}: {item['observacao']}")
+                else:
+                    st.info(f"{item['item']} — {item['status']}: {item['observacao']}")
 
         st.subheader("📄 Parecer técnico completo")
         st.text_area("Parecer para copiar", relatorio, height=650)
