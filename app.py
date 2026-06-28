@@ -876,7 +876,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-06-27-adaptativo-v25-ocr-por-pagina"
+OCR_PIPELINE_VERSION = "2026-06-27-adaptativo-v26-pendencias-contextuais"
 MARCADOR_METADADOS_OCR = "=== METADADOS INTERNOS DA EXTRAÇÃO OCR ==="
 MARCADOR_DIAGNOSTICO_INTERNO = "=== DIAGNÓSTICO INTERNO DO PIPELINE ==="
 
@@ -6451,6 +6451,28 @@ def criar_modelo_editavel_ppp(texto_ocr):
             }
             for r in responsaveis
         ]
+
+    # O SOC relp001r imprime "NA" nas colunas técnicas, mas o OCR pode
+    # separar esse valor da linha correspondente. Só completa como NA quando
+    # o próprio registro já informa EPI não aplicável; valores quantitativos
+    # existentes, como os de ruído, continuam preservados.
+    texto_norm = normalizar(texto_ocr)
+    layout_soc_relp001 = "soc" in texto_norm and "relp001" in texto_norm
+    if layout_soc_relp001:
+        for registro in modelo["tabelas"].get("15", []):
+            epi = normalizar(registro.get("15.7", ""))
+            if epi in {"na", "n/a", "nao aplicavel"}:
+                for codigo in ("15.4", "15.5", "15.8"):
+                    if not str(registro.get(codigo, "") or "").strip():
+                        registro[codigo] = "NA"
+
+    for registro in modelo["tabelas"].get("18", []):
+        nome = str(registro.get("18.2", "") or "").strip()
+        if not registro.get("18.3"):
+            partes = re.match(r"^(.+?)\s+-\s+([^\-]{3,50})$", nome)
+            if partes:
+                registro["18.2"] = partes.group(1).strip()
+                registro["18.3"] = partes.group(2).strip()
     return modelo
 
 
@@ -6492,6 +6514,10 @@ def campos_nao_lidos_modelo(modelo):
 
     cat = modelo.get("cat", {})
     for nome in ["Número", "Data", "Observações"]:
+        if nome in {"Número", "Data"} and normalizar(cat.get("Observações", "")) in {
+            "na", "n/a", "nao aplicavel"
+        }:
+            continue
         if not str(cat.get(nome, "") or "").strip():
             faltantes.append(f"Campo 12 – CAT – {nome}")
 
@@ -6499,6 +6525,17 @@ def campos_nao_lidos_modelo(modelo):
         registros = modelo.get("tabelas", {}).get(numero, []) or [{}]
         for indice, registro in enumerate(registros, start=1):
             for codigo, nome in colunas:
+                if (
+                    numero == "13" and codigo == "13.5"
+                    and str(registro.get("13.4", "") or "").strip()
+                ):
+                    # Função pode não ser informada quando o PPP já registra o
+                    # cargo. A célula continua editável, mas não é falha de OCR.
+                    continue
+                # O Campo 15.9 é um bloco global do PPP, não uma coluna que
+                # precise ser repetida em cada linha de agente.
+                if numero == "15" and codigo.startswith("15.9") and indice > 1:
+                    continue
                 if not str(registro.get(codigo, "") or "").strip():
                     faltantes.append(f"Campo {codigo} – {nome} – registro {indice}")
     return faltantes
@@ -6740,7 +6777,9 @@ hash_fonte = ""
 if uploaded_file is not None:
     bytes_pdf = uploaded_file.getvalue()
     hash_fonte = hashlib.sha256(
-        bytes_pdf + str(st.session_state["ocr_reprocessar_versao"]).encode("utf-8")
+        bytes_pdf
+        + OCR_PIPELINE_VERSION.encode("utf-8")
+        + str(st.session_state["ocr_reprocessar_versao"]).encode("utf-8")
     ).hexdigest()
     with st.spinner("📄 Lendo PDF e extraindo texto..."):
         texto_bruto = extrair_texto_pdf(
