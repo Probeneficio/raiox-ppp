@@ -876,7 +876,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-06-12-adaptativo-v24-soc-campo13-159"
+OCR_PIPELINE_VERSION = "2026-06-27-adaptativo-v25-ocr-por-pagina"
 MARCADOR_METADADOS_OCR = "=== METADADOS INTERNOS DA EXTRAÇÃO OCR ==="
 MARCADOR_DIAGNOSTICO_INTERNO = "=== DIAGNÓSTICO INTERNO DO PIPELINE ==="
 
@@ -921,6 +921,7 @@ def extrair_texto_pdf_bytes(pdf_bytes, pipeline_version):
     # ser processado novamente em vez de reutilizar uma extração antiga.
     _ = pipeline_version
     partes = []
+    textos_paginas_fitz = []
 
     if pdfplumber is not None:
         try:
@@ -946,7 +947,10 @@ def extrair_texto_pdf_bytes(pdf_bytes, pipeline_version):
         try:
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             for page in doc:
-                partes.append(page.get_text("text") + "\n")
+                texto_pagina = page.get_text("text") or ""
+                textos_paginas_fitz.append(texto_pagina)
+                partes.append(texto_pagina + "\n")
+            doc.close()
         except Exception as e:
             partes.append(f"\n[Erro na extração PyMuPDF: {e}]\n")
 
@@ -965,16 +969,58 @@ def extrair_texto_pdf_bytes(pdf_bytes, pipeline_version):
     _texto_norm_ocr = normalizar(texto)
     _tem_estrutura = any(t in _texto_norm_ocr for t in _termos_estruturais)
     _texto_curto = len(re.sub(r"\s+", "", texto)) < 300
-    precisa_ocr = _texto_curto or not _tem_estrutura
+    paginas_sem_texto = [
+        indice
+        for indice, texto_pagina in enumerate(textos_paginas_fitz)
+        if len(re.sub(r"\s+", "", texto_pagina or "")) < 120
+    ]
+    if textos_paginas_fitz and (_texto_curto or not _tem_estrutura):
+        paginas_sem_texto = list(range(len(textos_paginas_fitz)))
+    precisa_ocr = bool(paginas_sem_texto) or _texto_curto or not _tem_estrutura
     if precisa_ocr and pytesseract is not None and (convert_from_bytes is not None or fitz is not None):
         try:
-            imagens = converter_pdf_em_imagens(pdf_bytes, dpi=250)
-            for img in imagens:
+            if textos_paginas_fitz and paginas_sem_texto:
+                imagens_numeradas = converter_paginas_pdf_em_imagens(
+                    pdf_bytes, paginas_sem_texto, dpi=250
+                )
+            else:
+                imagens_numeradas = list(enumerate(converter_pdf_em_imagens(pdf_bytes, dpi=250)))
+            imagens = [imagem for _indice, imagem in imagens_numeradas]
+            for indice_pagina, img in imagens_numeradas:
                 config = "--psm 6 -c preserve_interword_spaces=1"
                 try:
-                    texto += "\n" + pytesseract.image_to_string(img, lang="por", config=config)
+                    leitura = pytesseract.image_to_string(img, lang="por", config=config)
                 except Exception:
-                    texto += "\n" + pytesseract.image_to_string(img, lang="por+eng", config=config)
+                    leitura = pytesseract.image_to_string(img, lang="por+eng", config=config)
+                texto += f"\n=== OCR DA PÁGINA {indice_pagina + 1} ===\n{leitura}"
+                leitura_agentes = leitura
+                agentes_pagina = extrair_agentes_detectados_campo15(leitura_agentes)
+                contexto_ambiental = any(
+                    termo in normalizar(leitura_agentes)
+                    for termo in [
+                        "fator de risco", "exposicao a fatores", "registros ambientais",
+                        "atendimento aos requisitos das nr-06", "atendimento aos requisitos das nr 06",
+                    ]
+                ) or len(agentes_pagina) >= 2
+                if contexto_ambiental and not layout_soc_ppp8_compativel(img):
+                    try:
+                        leitura_esparsa = pytesseract.image_to_string(
+                            img,
+                            lang="por+eng",
+                            config="--psm 11 -c preserve_interword_spaces=1",
+                        )
+                    except Exception:
+                        leitura_esparsa = ""
+                    if leitura_esparsa:
+                        texto += (
+                            f"\n=== OCR ESPARSO DA PÁGINA {indice_pagina + 1} ===\n"
+                            + leitura_esparsa
+                        )
+                        leitura_agentes += "\n" + leitura_esparsa
+                        agentes_pagina = extrair_agentes_detectados_campo15(leitura_agentes)
+                if contexto_ambiental and not ppp_sem_agentes_declarados(leitura_agentes):
+                    for agente in agentes_pagina:
+                        texto += f"\nAGENTE CAMPO 15 OCR: {agente}"
             imagens_soc = [img for img in imagens if layout_soc_ppp8_compativel(img)]
             if imagens_soc:
                 # O perfil SOC melhora células críticas, mas a grade dinâmica
@@ -994,6 +1040,46 @@ def extrair_texto_pdf_bytes(pdf_bytes, pipeline_version):
         f"extraida_em: {datetime.now().isoformat(timespec='seconds')}\n"
     )
     return texto + metadados
+
+
+def converter_paginas_pdf_em_imagens(pdf_bytes, indices_paginas, dpi=250):
+    """Renderiza somente páginas sem camada textual, preservando seu índice."""
+    from PIL import Image
+
+    indices = sorted({int(indice) for indice in indices_paginas if int(indice) >= 0})
+    if not indices:
+        return []
+
+    imagens = []
+    if fitz is not None:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            escala = dpi / 72.0
+            matriz = fitz.Matrix(escala, escala)
+            for indice in indices:
+                if indice >= doc.page_count:
+                    continue
+                pixmap = doc[indice].get_pixmap(matrix=matriz, alpha=False)
+                imagem = Image.open(BytesIO(pixmap.tobytes("png")))
+                imagens.append((indice, imagem.copy()))
+                imagem.close()
+        finally:
+            doc.close()
+        return imagens
+
+    if convert_from_bytes is not None:
+        for indice in indices:
+            paginas = convert_from_bytes(
+                pdf_bytes,
+                dpi=dpi,
+                first_page=indice + 1,
+                last_page=indice + 1,
+            )
+            if paginas:
+                imagens.append((indice, paginas[0]))
+        return imagens
+
+    raise RuntimeError("Nenhum renderizador de PDF está disponível para o OCR seletivo.")
 
 
 def converter_pdf_em_imagens(pdf_bytes, dpi=250):
@@ -2043,9 +2129,9 @@ def extrair_responsavel_tecnico(texto):
 
     bloco_16 = bloco_tabela_por_termos(
         texto,
-        ["16 - respons", "16.1", "responsável pelos registros ambientais", "responsavel pelos registros ambientais"],
+        ["16 - respons", "16 – respons", "16.1", "responsável pelos registros ambientais", "responsavel pelos registros ambientais"],
         [
-            "17 -", "18 -", "18.1", "19 data", "20 representante",
+            "17 -", "17 –", "18 -", "18 –", "18.1", "19 data", "20 representante",
             "responsáveis pelas informações", "responsaveis pelas informacoes",
             "declaramos", "data da emissão", "data da emissao",
             "representante legal", "=== ocr",
@@ -2359,6 +2445,7 @@ def extrair_responsaveis_ambientais_linhas(texto):
         ],
     ) if "bloco_tabela_por_termos" in globals() else []
     texto_base = "\n".join(bloco_16) if bloco_16 else texto
+    texto_base = re.sub(r"\bat[eé]\b", "a", texto_base, flags=re.IGNORECASE)
     linhas_brutas = [re.sub(r"\s+", " ", l).strip() for l in texto_base.splitlines() if l.strip()]
     linhas = agrupar_linhas_campo16(linhas_brutas)
     responsaveis = []
@@ -2462,6 +2549,20 @@ def extrair_responsaveis_ambientais_linhas(texto):
                     "habilitacao": habilitacao,
                 })
 
+    datas_bloco = re.findall(r"\b\d{2}/\d{2}/\d{4}\b", texto_base)
+    m_nome_horizontal = re.search(
+        r"\b\d{2}/\d{2}/\d{4}\b\s+"
+        r"(?P<nome>[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]+"
+        r"(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]+){1,5})"
+        r"\s+a\s+\d{10,11}\s+\d{3,8}",
+        texto_base,
+    )
+    if responsaveis and len(responsaveis) == 1:
+        item = responsaveis[0]
+        if len(datas_bloco) >= 2 and not re.search(r"\d{2}/\d{2}/\d{4}\s+a\s+\d{2}/\d{2}/\d{4}", item.get("periodo", "")):
+            item["periodo"] = f"{datas_bloco[0]} a {datas_bloco[1]}"
+        if m_nome_horizontal and valor_ausente_estrutural(item.get("nome", "")):
+            item["nome"] = m_nome_horizontal.group("nome")
     return responsaveis
 
 
@@ -2563,7 +2664,8 @@ PPP_CAMPOS_ESTRUTURADOS = [
     ]},
     {"numero": "17", "nome": "Data de emissão do PPP", "criticidade": "MODERADA", "fundamento": FUNDAMENTO_CAMPOS_ESTRUTURADOS["emissao"], "termos": ["data de emissao", "data de emissão", "emissao", "emissão"]},
     {"numero": "18", "nome": "Representante legal", "criticidade": "CRÍTICA", "fundamento": FUNDAMENTO_CAMPOS_ESTRUTURADOS["emissao"], "composto": True, "subcampos": [
-        ("18.1", "NIT/CPF do representante legal"), ("18.2", "Nome do representante legal")
+        ("18.1", "NIT/CPF do representante legal"), ("18.2", "Nome do representante legal"),
+        ("18.3", "Cargo do representante legal"), ("18.4", "Assinatura do representante legal")
     ]},
 ]
 
@@ -2596,6 +2698,8 @@ def campo_administrativo_informativo(campo):
 def nome_representante_valido(nome):
     n = normalizar(nome or "")
     if not n or len(n) < 5:
+        return False
+    if n in {"legal", "representante legal", "data emissao", "nome representante legal"}:
         return False
     if re.fullmatch(r"[\d\.\,\:\-<\)\s]+", str(nome or "").strip()):
         return False
@@ -2791,6 +2895,12 @@ def tipo_agente_confiavel(fator):
 def ppp_sem_agentes_declarados(texto):
     tn = normalizar(texto or "")
     if re.search(
+        r"ausencia.{0,100}riscos?.{0,180}fisicos?.{0,100}quimicos?.{0,100}biologicos?",
+        tn,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        return True
+    if re.search(
         r"\bausencia\s+de\s+riscos?\s*[,;:\-]?\s*fisicos?"
         r"(?:\s*[,;/]\s*|\s+e\s+)quimicos?"
         r"(?:\s*[,;/]\s*(?:e\s+)?|\s+e\s+)biologicos?\b",
@@ -2845,7 +2955,7 @@ def inferir_tipo_agente_15(texto):
     if re.fullmatch(r"q", t) or any(p in t for p in [
         "quimico", "hidrocarbon", "oleo", "oleos", "graxa", "lubrificante",
         "fumos", "poeira", "silica", "agrotoxico", "pesticida", "domissanitario",
-        "tensoativo", "hexano", "heptano", "acetona", "acetato", "tolueno",
+        "tensoativo", "hexano", "heptano", "acetona", "acetato", "tolueno", "xileno",
         "solvente", "dioxido de titanio", "silicato", "chumbo", "ferro", "manganes"
     ]):
         return "Químico"
@@ -2874,7 +2984,7 @@ def inferir_fator_risco_15(texto):
         (["calor"], "Calor"),
         (["umidade"], "Umidade"),
         (["vibracao de corpo inteiro", "vci", "vdvr"], "Vibração de corpo inteiro"),
-        (["vibracao de maos e bracos", "vmb", "aren"], "Vibração de mãos e braços"),
+        (["vibracao de maos e bracos", "vmb"], "Vibração de mãos e braços"),
         (["hidrocarbonetos aromaticos"], "Hidrocarbonetos aromáticos"),
         (["hidrocarboneto"], "Hidrocarbonetos"),
         (["oleo mineral", "oleos minerais"], "Óleos minerais"),
@@ -2922,7 +3032,7 @@ def extrair_agentes_detectados_campo15(texto):
     regras = [
         ("Radiações não ionizantes", ["radiacoes nao ionizantes", "radiacao nao ionizante", "radiações não ionizantes", "radiação não ionizante", "onizantes"]),
         ("Ruído contínuo/intermitente", ["ruido continuo", "ruido intermitente", "ruido", "ruído", "decibel", "db(a)", "db"]),
-        ("Vibração de mãos e braços", ["vibracao de maos e bracos", "vibração de mãos e braços", "maos e bracos", "mãos e braços", "vmb", "aren", "mb)"]),
+        ("Vibração de mãos e braços", ["vibracao de maos e bracos", "vibração de mãos e braços", "maos e bracos", "mãos e braços", "vmb", "mb)"]),
         ("Vibração de corpo inteiro", ["vibracao de corpo inteiro", "vibração de corpo inteiro", "vci", "vdvr"]),
         ("Calor", ["calor", "ibutg"]),
         ("Umidade", ["umidade"]),
@@ -2938,6 +3048,9 @@ def extrair_agentes_detectados_campo15(texto):
         ("Poeiras minerais", ["poeiras minerais", "poeira mineral"]),
         ("Sílica", ["silica", "sílica"]),
         ("Óleos minerais", ["oleos minerais", "óleos minerais", "oleo mineral", "óleo mineral"]),
+        ("Dióxido de titânio", ["dioxido de titanio", "dióxido de titânio"]),
+        ("Silicato de alumínio", ["silicato de aluminio", "silicato de alumínio"]),
+        ("Xileno", ["xileno"]),
         ("Hidrocarbonetos aromáticos", ["hidrocarbonetos aromaticos", "hidrocarbonetos aromáticos"]),
         ("Hidrocarbonetos", ["hidrocarboneto", "hidrocarbonetos"]),
         ("Graxas/lubrificantes", ["graxa", "graxas", "lubrificante", "lubrificantes"]),
@@ -3611,6 +3724,11 @@ def motivo_rejeicao_linha_15(dados):
     periodo = str(dados.get("15.1", ""))
     if periodo and not periodo_ambiental_valido_15(periodo):
         return "15.1 não é período ambiental válido"
+    fator_norm = normalizar(str(dados.get("15.3", ""))).strip()
+    if fator_norm in {
+        "resultante de", "dose de vibracao", "fisico", "quimico", "biologico",
+    } or re.fullmatch(r"\d{2}/\d{2}/\d{4}\s+a(?:tual)?\s+fisico", fator_norm):
+        return "15.3 contém fragmento de célula, não um agente confiável"
     return ""
 
 
@@ -4000,6 +4118,27 @@ def indice_original_por_texto_normalizado(texto, termo):
     return indices[pos] if pos != -1 and pos < len(indices) else -1
 
 
+def indice_agente_campo15(texto, agente):
+    pos = indice_original_por_texto_normalizado(texto, agente)
+    if pos != -1:
+        return pos
+    agente_norm = normalizar(agente)
+    aliases = []
+    if "ruido" in agente_norm:
+        aliases = ["ruido continuo", "ruido"]
+    elif "vibracao de corpo" in agente_norm:
+        aliases = ["vibracao de corpo inteiro", "vdvr"]
+    elif "vibracao de maos" in agente_norm:
+        aliases = ["vibracao de maos e bracos", "vmb"]
+    elif "radiac" in agente_norm:
+        aliases = ["radiacao nao ionizante", "radiacoes nao ionizantes"]
+    for alias in aliases:
+        pos = indice_original_por_texto_normalizado(texto, alias)
+        if pos != -1:
+            return pos
+    return -1
+
+
 def suplementar_linhas_15_por_agentes(bloco, linhas):
     """
     Garante uma linha lógica para cada agente escrito no Campo 15. Em muitos
@@ -4012,7 +4151,7 @@ def suplementar_linhas_15_por_agentes(bloco, linhas):
     periodos = re.findall(periodo_ppp_regex(), texto_bloco, flags=re.IGNORECASE)
     periodo_herdado = periodos[0] if periodos else ""
     existentes = " ".join(
-        " ".join(str(dados.get(chave) or "") for chave in ["15.3", "_agentes_detectados"])
+        str(dados.get("15.3") or "")
         for dados in linhas.values()
     )
     existentes_detectados = {
@@ -4020,7 +4159,7 @@ def suplementar_linhas_15_por_agentes(bloco, linhas):
     }
     posicoes_agentes = []
     for agente in agentes:
-        pos = indice_original_por_texto_normalizado(texto_bloco, agente)
+        pos = indice_agente_campo15(texto_bloco, agente)
         if pos != -1:
             posicoes_agentes.append((pos, agente))
     posicoes_agentes.sort()
@@ -4031,7 +4170,7 @@ def suplementar_linhas_15_por_agentes(bloco, linhas):
     for agente in agentes:
         if normalizar(agente) in existentes_detectados:
             continue
-        pos = indice_original_por_texto_normalizado(texto_bloco, agente)
+        pos = indice_agente_campo15(texto_bloco, agente)
         limite = proxima_posicao.get(agente)
         fim = min(pos + 240, limite) if pos != -1 and limite is not None else pos + 240
         contexto = texto_bloco[pos:fim] if pos != -1 else agente
@@ -4066,6 +4205,38 @@ def suplementar_linhas_15_por_agentes(bloco, linhas):
             dados["15.7"] = normalizar_resposta_sn(respostas[1])
         normalizar_linha_15(dados)
         linhas[len(linhas) + 1] = dados
+    return linhas
+
+
+def suplementar_linhas_15_por_marcadores(texto, linhas):
+    """Inclui no editor agentes expressamente lidos em páginas escaneadas."""
+    agentes = re.findall(
+        r"(?im)^\s*AGENTE\s+CAMPO\s+15\s+(?:SOC|OCR)\s*:\s*(.+?)\s*$",
+        texto or "",
+    )
+    existentes = {
+        normalizar(dados.get("15.3", ""))
+        for dados in linhas.values()
+        if dados.get("15.3")
+    }
+    periodo_herdado = next(
+        (dados.get("15.1", "") for dados in linhas.values() if dados.get("15.1")),
+        "",
+    )
+    for agente in dict.fromkeys(re.sub(r"\s+", " ", a).strip() for a in agentes):
+        if not agente or normalizar(agente) in existentes:
+            continue
+        dados = {
+            "15.1": periodo_herdado,
+            "15.2": inferir_tipo_agente_15(agente),
+            "15.3": agente,
+            "_agentes_detectados": agente,
+            "_linha_original": f"Agente localizado por OCR seletivo: {agente}",
+            "_linha_suplementar": True,
+        }
+        normalizar_linha_15(dados)
+        linhas[len(linhas) + 1] = dados
+        existentes.add(normalizar(agente))
     return linhas
 
 
@@ -4125,12 +4296,49 @@ def extrair_subcampos_13_rotulados(bloco):
         if not m:
             continue
         valor = re.sub(r"\s+", " ", m.group(1)).strip(" :|")
+        valor = re.split(r"\b\d{2}/\d{2}/\d{4}\b|\b13\.[3-7]\b", valor, maxsplit=1)[0].strip(" :|")
         if valor in {"-", "—"}:
             valor = "NA"
         validado = validar_valor_ocr_soc(codigo, valor)
         if validado:
             encontrados[codigo] = validado
     return encontrados
+
+
+def extrair_linha_13_horizontal(bloco):
+    """Reconstrói a linha de formulários antigos linearizados por coluna."""
+    texto = re.sub(r"\s+", " ", "\n".join(bloco or [])).strip()
+    cnpj = re.search(r"\b\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\b", texto)
+    data = re.search(r"\b\d{2}/\d{2}/\d{4}\b", texto)
+    cbo_relativo = re.search(r"\b\d{4}-\d{2}\b|\b\d{6}\b", texto[cnpj.end():]) if cnpj else None
+    if not (cnpj and cbo_relativo and data):
+        return {}
+    cbo_inicio = cnpj.end() + cbo_relativo.start()
+    cbo_fim = cnpj.end() + cbo_relativo.end()
+    dados = {
+        "13.1": data.group(0) + (" até data atual" if "data atual" in normalizar(texto) else ""),
+        "13.2": cnpj.group(0),
+        "13.6": cbo_relativo.group(0),
+    }
+    atribuicoes = texto[cnpj.end():cbo_inicio].strip(" -:|").split()
+    for tamanho in range(max(1, len(atribuicoes) // 2), 0, -1):
+        cargo = atribuicoes[-2 * tamanho:-tamanho]
+        funcao = atribuicoes[-tamanho:]
+        if cargo and [normalizar(x) for x in cargo] == [normalizar(x) for x in funcao]:
+            setor = atribuicoes[:-2 * tamanho]
+            if setor:
+                dados["13.3"] = " ".join(setor)
+            dados["13.4"] = " ".join(cargo)
+            dados["13.5"] = " ".join(funcao)
+            break
+    depois_cbo = texto[cbo_fim:cbo_fim + 30]
+    gfip = re.search(r"\b(?:00|01|02|03|04|05|06|07|08|09|0515)\b", depois_cbo)
+    if gfip:
+        dados["13.7"] = gfip.group(0)
+    elif re.match(r"\s*-", depois_cbo):
+        dados["13.7"] = "NA"
+    dados["_linha_original"] = texto
+    return dados
 
 
 def extrair_linhas_13_matriciais(texto):
@@ -4207,8 +4415,8 @@ def extrair_linhas_13_matriciais(texto):
 def extrair_linhas_13_ocr(texto):
     bloco_original = bloco_tabela_por_termos(
         texto,
-        ["13 - lotação", "13 lotação", "13 -", "13.1", "lotação e atribuição", "lotacao e atribuicao"],
-        ["14 - profissiografia", "14 profissiografia", "14 -", "14.1", "profissiografia", "15 - exposição", "15 exposicao", "15 -", "fatores de riscos"],
+        ["13 - lotação", "13 – lotação", "13 lotação", "13 -", "13.1", "lotação e atribuição", "lotacao e atribuicao"],
+        ["14 - profissiografia", "14 – profissiografia", "14 profissiografia", "14 -", "14.1", "profissiografia", "15 - exposição", "15 – exposição", "15 exposicao", "15 -", "fatores de riscos"],
     )
     bloco = list(bloco_original)
     bloco = agrupar_linhas_por_inicio_estrutural(bloco, "13")
@@ -4343,6 +4551,12 @@ def extrair_linhas_13_ocr(texto):
         for codigo, valor in dados_matriciais.items():
             if codigo == "_linha_original" or codigo.startswith("13.") or not destino.get(codigo):
                 destino[codigo] = valor
+    horizontal = extrair_linha_13_horizontal(bloco_original)
+    if horizontal:
+        destino = linhas.setdefault(1, {})
+        for codigo, valor in horizontal.items():
+            if codigo == "_linha_original" or codigo.startswith("13."):
+                destino[codigo] = valor
     return deduplicar_linhas_dict(linhas, ["13.1", "13.2", "13.3", "13.4", "13.5", "13.6", "13.7"])
 
 
@@ -4447,6 +4661,7 @@ def extrair_linhas_15_ocr(texto):
     bloco = linhas_bloco_campo15(texto)
     if not bloco:
         return {}
+    bloco_original = list(bloco)
     bloco = agrupar_linhas_por_inicio_estrutural(bloco, "15")
     linhas = {}
     padrao_periodo = periodo_ppp_regex()
@@ -4604,7 +4819,15 @@ def extrair_linhas_15_ocr(texto):
                 continue
             linhas_validas[len(linhas_validas) + 1] = dados
         linhas = linhas_validas
-    if not linhas and ppp_sem_agentes_declarados(texto):
+    sem_agentes_declarados = ppp_sem_agentes_declarados(
+        "\n".join(bloco_original)
+    ) or ppp_sem_agentes_declarados(texto)
+    if not sem_agentes_declarados:
+        linhas = suplementar_linhas_15_por_agentes(bloco_original, linhas)
+        linhas = suplementar_linhas_15_por_marcadores(texto, linhas)
+    else:
+        linhas = {}
+    if not linhas and sem_agentes_declarados:
         linhas[1] = {
             "15.1": "NA",
             "15.2": "NA",
@@ -4680,7 +4903,11 @@ def extrair_linhas_15_ocr(texto):
             else:
                 linhas[idx] = dados
     for dados in linhas.values():
-        normalizar_linha_15(dados)
+        if ppp_sem_agentes_declarados(dados.get("15.3", "")):
+            dados["15.2"] = "NA"
+            dados["_agentes_detectados"] = ""
+        else:
+            normalizar_linha_15(dados)
     if rejeitadas and linhas:
         linhas[1]["_linhas_15_rejeitadas"] = rejeitadas[:8]
     return deduplicar_linhas_dict(linhas, ["15.1", "15.2", "15.3", "15.4", "15.5", "15.6", "15.7", "15.8"])
@@ -4719,10 +4946,14 @@ def montar_linhas_compostas(texto, campo):
         ]
         for idx, resp in enumerate(responsaveis, start=1):
             manuais.setdefault(idx, {})
-            manuais[idx].setdefault("16.1", resp.get("periodo", ""))
-            manuais[idx].setdefault("16.2", resp.get("cpf", ""))
-            manuais[idx].setdefault("16.3", resp.get("registro", ""))
-            manuais[idx].setdefault("16.4", resp.get("nome", ""))
+            for codigo, chave in (
+                ("16.1", "periodo"),
+                ("16.2", "cpf"),
+                ("16.3", "registro"),
+                ("16.4", "nome"),
+            ):
+                if not str(manuais[idx].get(codigo, "") or "").strip():
+                    manuais[idx][codigo] = resp.get(chave, "")
         for idx in list(manuais):
             chaves_16 = [
                 chave for chave, valor in manuais[idx].items()
@@ -4765,16 +4996,21 @@ def montar_linhas_compostas(texto, campo):
         janela_rep = janela_representante_legal(texto)
         bloco_18 = bloco_tabela_por_termos(
             texto,
-            ["18 representante legal", "18 - representante legal", "representante legal da empresa"],
+            ["18 representante legal", "18 - representante legal", "18 – representante legal", "representante legal da empresa"],
             ["19 ", "20 ", "observações", "observacoes", "assinatura"],
         )
         texto_18 = "\n".join(bloco_18)
         bloco_20 = bloco_tabela_por_termos(
             texto,
-            ["20 representante legal", "20 - representante legal", "representante legal da empresa"],
+            ["20 representante legal", "20 - representante legal", "20 – representante legal", "representante legal da empresa"],
             ["observações", "observacoes", "assinatura"],
         )
         texto_20 = "\n".join(bloco_20)
+        layout_antigo = "19.1-data emissao" in normalizar(texto) or "19.1 data emissao" in normalizar(texto)
+        if layout_antigo:
+            # No formulário antigo, o Campo 18 é monitoração biológica; o
+            # representante legal está exclusivamente no Campo 20.
+            texto_18 = ""
         janela_rep_curta = re.split(
             r"\b(?:Observa[cç][oõ]es|As informa[cç][oõ]es referentes|Memorando[-\s]Circular)\b",
             janela_rep,
@@ -4802,6 +5038,21 @@ def montar_linhas_compostas(texto, campo):
                     m_nome_linha = re.search(r"([A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç\?]{3,}\s+Oswaldt(?:\s*-\s*(?:Diret|Diretor|Administrador))?)", linha_rep, flags=re.IGNORECASE)
                     if m_nome_linha and nome_representante_valido(m_nome_linha.group(1)):
                         nome = limpar_nome_representante(m_nome_linha.group(1))
+        if nome and not nome_representante_valido(nome):
+            nome = ""
+        if not nome:
+            linhas_fonte = [linha.strip() for linha in fonte_representante.splitlines() if linha.strip()]
+            for indice_linha, linha_fonte in enumerate(linhas_fonte):
+                if not re.search(r"\d{3}[\.,]?\d{3,6}[\.,:]?\d{2}", linha_fonte):
+                    continue
+                candidatos = []
+                for trecho in linhas_fonte[indice_linha:indice_linha + 5]:
+                    candidatos.extend(tokens_linha_ocr(trecho))
+                candidatos = [limpar_nome_representante(item) for item in candidatos]
+                candidatos = [item for item in candidatos if nome_representante_valido(item)]
+                if candidatos:
+                    nome = candidatos[-1]
+                    break
         if not cpf:
             m_cpf18 = re.search(r"18\.1\s*(?:NIT|CPF)?[^\d]{0,30}([\d\.\-]{8,20})", texto_18, flags=re.IGNORECASE)
             if m_cpf18:
@@ -5078,7 +5329,7 @@ def linhas_campo15_para_analise(texto):
                     validado = validar_valor_ocr_soc(numero, base[numero])
                     if validado:
                         linha[numero] = validado
-        if linha.get("15.3"):
+        if linha.get("15.3") and not ppp_sem_agentes_declarados(linha.get("15.3")):
             tipo_fator = tipo_agente_confiavel(linha["15.3"])
             if tipo_fator:
                 linha["15.2"] = tipo_fator
@@ -5110,7 +5361,10 @@ def corpus_agentes_campo15(texto):
         ["15.9", "16 - respons", "16.1", "responsável pelos registros", "responsavel pelos registros"],
     )
     texto_bloco = " ".join(re.sub(r"\s+", " ", l).strip() for l in bloco)
-    partes.extend(re.findall(r"(?im)^\s*AGENTE\s+CAMPO\s+15\s+SOC\s*:\s*(.+?)\s*$", texto or ""))
+    partes.extend(re.findall(
+        r"(?im)^\s*AGENTE\s+CAMPO\s+15\s+(?:SOC|OCR)\s*:\s*(.+?)\s*$",
+        texto or "",
+    ))
     if not ppp_sem_agentes_declarados(texto_bloco):
         # Mesmo quando uma linha já foi estruturada, o OCR pode ter omitido a
         # repetição de período/tipo nas linhas seguintes. Reaproveita somente
@@ -6055,6 +6309,396 @@ def preparar_texto_editavel(texto):
 
 
 # ============================================================
+# MODELO EDITÁVEL — FONTE ÚNICA DA ANÁLISE
+# ============================================================
+
+CAMPOS_ESCALARES_EDITOR = [
+    ("1", "CNPJ / CEI / CAEPF / CNO"),
+    ("2", "Nome empresarial"),
+    ("3", "CNAE"),
+    ("4", "Nome do trabalhador"),
+    ("5", "BR / PDH"),
+    ("6", "CPF / NIT"),
+    ("7", "Data de nascimento"),
+    ("8", "Sexo"),
+    ("9", "Matrícula eSocial / CTPS"),
+    ("10", "Data de admissão"),
+    ("11", "Regime de revezamento"),
+    ("17", "Data de emissão do PPP"),
+]
+
+CAMPOS_TABELA_EDITOR = {
+    "13": [
+        ("13.1", "Período"), ("13.2", "CNPJ/CEI/CAEPF/CNO"),
+        ("13.3", "Setor"), ("13.4", "Cargo"), ("13.5", "Função"),
+        ("13.6", "CBO"), ("13.7", "Código GFIP/eSocial"),
+    ],
+    "14": [("14.1", "Período"), ("14.2", "Descrição das atividades")],
+    "15": [
+        ("15.1", "Período"), ("15.2", "Tipo"), ("15.3", "Agente"),
+        ("15.4", "Intensidade/concentração"), ("15.5", "Técnica utilizada"),
+        ("15.6", "EPC"), ("15.7", "EPI"), ("15.8", "CA"),
+        ("15.9", "Atendimento à legislação"),
+        ("15.9 [01]", "Proteção coletiva antes do EPI"),
+        ("15.9 [02]", "Uso ininterrupto do EPI"),
+        ("15.9 [03]", "Validade/CA"),
+        ("15.9 [04]", "Periodicidade de troca"),
+        ("15.9 [05]", "Higienização"),
+    ],
+    "16": [
+        ("16.1", "Período"), ("16.2", "CPF/NIT"),
+        ("16.3", "Registro/conselho profissional"),
+        ("16.4", "Nome do profissional"),
+    ],
+    "18": [
+        ("18.1", "CPF/NIT"), ("18.2", "Nome"),
+        ("18.3", "Cargo"), ("18.4", "Assinatura"),
+    ],
+}
+
+NOMES_CAMPOS_TABELA_EDITOR = {
+    "13": "Lotação e atribuição",
+    "14": "Profissiografia",
+    "15": "Fatores de risco",
+    "16": "Responsáveis pelos registros ambientais",
+    "18": "Representante legal",
+}
+
+
+def _registros_editor(valor):
+    """Converte o retorno do st.data_editor em lista de dicionários."""
+    if hasattr(valor, "to_dict"):
+        try:
+            return valor.to_dict("records")
+        except Exception:
+            return []
+    if isinstance(valor, list):
+        return [dict(item) for item in valor if isinstance(item, dict)]
+    return []
+
+
+def criar_modelo_editavel_ppp(texto_ocr):
+    """Usa o OCR uma única vez para sugerir valores ao formulário editável."""
+    campos = analisar_campos(texto_ocr)
+    por_numero = {str(campo.get("numero")): campo for campo in campos}
+    modelo = {"escalares": {}, "cat": {}, "tabelas": {}}
+
+    for numero, _nome in CAMPOS_ESCALARES_EDITOR:
+        modelo["escalares"][numero] = str(
+            por_numero.get(numero, {}).get("valor") or ""
+        ).strip()
+
+    valor_cat = str(por_numero.get("12", {}).get("valor") or "").strip()
+    modelo["cat"] = {"Número": "", "Data": "", "Observações": valor_cat}
+
+    for numero, colunas in CAMPOS_TABELA_EDITOR.items():
+        campo = por_numero.get(numero, {})
+        registros = []
+        for linha in campo.get("linhas") or []:
+            subcampos = linha.get("subcampos", {})
+            registro = {
+                codigo: str(subcampos.get(codigo, {}).get("valor") or "").strip()
+                for codigo, _nome in colunas
+            }
+            if any(registro.values()) and registro not in registros:
+                registros.append(registro)
+        if not registros:
+            registros = [{codigo: "" for codigo, _nome in colunas}]
+        modelo["tabelas"][numero] = registros
+
+    if ppp_sem_agentes_declarados(texto_ocr):
+        modelo["tabelas"]["15"] = [{
+            codigo: (
+                "Ausência de riscos físico, químico e biológico"
+                if codigo == "15.3" else "NA"
+            )
+            for codigo, _nome in CAMPOS_TABELA_EDITOR["15"]
+        }]
+
+    responsaveis = [
+        r for r in extrair_responsaveis_ambientais_linhas(texto_ocr)
+        if responsavel_ambiental_linha_coerente(r)
+    ]
+    if not responsaveis:
+        horizontal = re.search(
+            r"(\d{2}/\d{2}/\d{4})\s+(?:a|at[eé])\s+(\d{2}/\d{2}/\d{4})\s*\|\s*"
+            r"(\d{11})\s*\|\s*([^|\r\n]{3,30})\s*\|\s*"
+            r"([A-ZÁ-Ú][A-Za-zÀ-ÿ ]{5,80}?)(?:\s*\(|\s*\||\r?$)",
+            texto_ocr,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        if horizontal:
+            responsaveis = [{
+                "periodo": f"{horizontal.group(1)} a {horizontal.group(2)}",
+                "cpf": horizontal.group(3),
+                "registro": horizontal.group(4).strip(),
+                "nome": horizontal.group(5).strip(),
+            }]
+    if responsaveis:
+        unicos = {}
+        for r in responsaveis:
+            chave = (r.get("periodo", ""), r.get("cpf", ""), r.get("registro", ""))
+            atual = unicos.get(chave)
+            if atual is None or len(r.get("nome", "")) < len(atual.get("nome", "")):
+                unicos[chave] = r
+        responsaveis = list(unicos.values())
+        modelo["tabelas"]["16"] = [
+            {
+                "16.1": r.get("periodo", ""),
+                "16.2": r.get("cpf", ""),
+                "16.3": r.get("registro", ""),
+                "16.4": r.get("nome", ""),
+            }
+            for r in responsaveis
+        ]
+    return modelo
+
+
+def serializar_modelo_editavel_ppp(modelo):
+    """
+    Gera a entrada canônica do parecer. O OCR bruto não é anexado aqui:
+    somente valores presentes nos editores chegam às funções de análise.
+    """
+    linhas = ["=== DADOS ESTRUTURADOS REVISADOS PELO USUÁRIO ==="]
+    nomes_escalares = dict(CAMPOS_ESCALARES_EDITOR)
+    for numero, _nome in CAMPOS_ESCALARES_EDITOR:
+        valor = str(modelo.get("escalares", {}).get(numero, "") or "").strip()
+        if valor:
+            linhas.append(f"{numero} - {nomes_escalares[numero]}: {valor}")
+
+    cat = modelo.get("cat", {})
+    partes_cat = [
+        f"{rotulo}: {str(cat.get(rotulo, '') or '').strip()}"
+        for rotulo in ["Número", "Data", "Observações"]
+        if str(cat.get(rotulo, "") or "").strip()
+    ]
+    if partes_cat:
+        linhas.append("12 - CAT registrada: " + " | ".join(partes_cat))
+
+    for numero, colunas in CAMPOS_TABELA_EDITOR.items():
+        for indice, registro in enumerate(modelo.get("tabelas", {}).get(numero, []), start=1):
+            for codigo, nome in colunas:
+                valor = str(registro.get(codigo, "") or "").strip()
+                if valor:
+                    linhas.append(f"{codigo} - {nome} | linha {indice}: {valor}")
+    return "\n".join(linhas).strip() + "\n"
+
+
+def campos_nao_lidos_modelo(modelo):
+    faltantes = []
+    for numero, nome in CAMPOS_ESCALARES_EDITOR:
+        if not str(modelo.get("escalares", {}).get(numero, "") or "").strip():
+            faltantes.append(f"Campo {numero} – {nome}")
+
+    cat = modelo.get("cat", {})
+    for nome in ["Número", "Data", "Observações"]:
+        if not str(cat.get(nome, "") or "").strip():
+            faltantes.append(f"Campo 12 – CAT – {nome}")
+
+    for numero, colunas in CAMPOS_TABELA_EDITOR.items():
+        registros = modelo.get("tabelas", {}).get(numero, []) or [{}]
+        for indice, registro in enumerate(registros, start=1):
+            for codigo, nome in colunas:
+                if not str(registro.get(codigo, "") or "").strip():
+                    faltantes.append(f"Campo {codigo} – {nome} – registro {indice}")
+    return faltantes
+
+
+def exibir_editor_campos_ppp(modelo_inicial, geracao):
+    """Renderiza todos os Campos 1 a 18 sem ocultar valores ausentes."""
+    modelo = {"escalares": {}, "cat": {}, "tabelas": {}}
+    st.header("Conferência e edição dos Campos 1 a 18")
+    st.caption(
+        "Os valores abaixo foram sugeridos pelo OCR. Corrija livremente: "
+        "somente este formulário será usado na análise técnica."
+    )
+
+    for numero, nome in CAMPOS_ESCALARES_EDITOR:
+        if numero == "17":
+            continue
+        modelo["escalares"][numero] = st.text_input(
+            f"Campo {numero} – {nome}",
+            value=modelo_inicial.get("escalares", {}).get(numero, ""),
+            key=f"ppp_editor_{geracao}_{numero}",
+            placeholder="NÃO LOCALIZADO – preencha após conferir o PPP",
+        )
+
+    st.subheader("Campo 12 – CAT")
+    colunas_cat = st.columns(3)
+    for coluna, nome in zip(colunas_cat, ["Número", "Data", "Observações"]):
+        with coluna:
+            modelo["cat"][nome] = st.text_input(
+                nome,
+                value=modelo_inicial.get("cat", {}).get(nome, ""),
+                key=f"ppp_editor_{geracao}_12_{normalizar(nome)}",
+                placeholder="NÃO LOCALIZADO",
+            )
+
+    for numero in ["13", "14", "15", "16"]:
+        st.subheader(f"Campo {numero} – {NOMES_CAMPOS_TABELA_EDITOR[numero]}")
+        colunas = CAMPOS_TABELA_EDITOR[numero]
+        configuracao = {
+            codigo: st.column_config.TextColumn(f"{codigo} – {nome}")
+            for codigo, nome in colunas
+        }
+        editado = st.data_editor(
+            modelo_inicial.get("tabelas", {}).get(numero, []),
+            key=f"ppp_editor_{geracao}_tabela_{numero}",
+            column_config=configuracao,
+            num_rows="dynamic",
+            hide_index=True,
+            use_container_width=True,
+        )
+        modelo["tabelas"][numero] = _registros_editor(editado)
+        if numero in {"15", "16"}:
+            st.caption("Use o botão + da tabela para incluir outros registros.")
+
+    modelo["escalares"]["17"] = st.text_input(
+        "Campo 17 – Data de emissão do PPP",
+        value=modelo_inicial.get("escalares", {}).get("17", ""),
+        key=f"ppp_editor_{geracao}_17",
+        placeholder="NÃO LOCALIZADO – preencha após conferir o PPP",
+    )
+
+    st.subheader("Campo 18 – Representante legal")
+    colunas_18 = CAMPOS_TABELA_EDITOR["18"]
+    editado_18 = st.data_editor(
+        modelo_inicial.get("tabelas", {}).get("18", []),
+        key=f"ppp_editor_{geracao}_tabela_18",
+        column_config={
+            codigo: st.column_config.TextColumn(f"{codigo} – {nome}")
+            for codigo, nome in colunas_18
+        },
+        num_rows="dynamic",
+        hide_index=True,
+        use_container_width=True,
+    )
+    modelo["tabelas"]["18"] = _registros_editor(editado_18)
+    return modelo
+
+
+def _texto_compativel_pdf(texto):
+    """Mantém caracteres jurídicos e troca apenas glifos sem suporte na fonte PDF."""
+    substituicoes = {
+        "📄": "", "📋": "", "🔎": "", "⚠️": "", "✅": "",
+        "⬇️": "", "🚀": "", "🔄": "", "•": "-",
+    }
+    texto = str(texto or "")
+    for origem, destino in substituicoes.items():
+        texto = texto.replace(origem, destino)
+    return texto.encode("cp1252", errors="replace").decode("cp1252")
+
+
+def _quebrar_linha_pdf(texto, largura, fonte, tamanho):
+    palavras = str(texto or "").split()
+    if not palavras:
+        return [""]
+    linhas = []
+    atual = palavras[0]
+    for palavra in palavras[1:]:
+        candidata = f"{atual} {palavra}"
+        if fitz.get_text_length(candidata, fontname=fonte, fontsize=tamanho) <= largura:
+            atual = candidata
+        else:
+            linhas.append(atual)
+            atual = palavra
+    linhas.append(atual)
+    return linhas
+
+
+@st.cache_data(show_spinner=False)
+def gerar_pdf_parecer(relatorio):
+    """Converte o parecer já finalizado em PDF A4 paginado e pesquisável."""
+    if fitz is None:
+        raise RuntimeError("PyMuPDF não está disponível para gerar o PDF.")
+
+    documento = fitz.open()
+    largura_pagina, altura_pagina = fitz.paper_size("a4")
+    margem_x = 48
+    topo = 58
+    rodape = 42
+    largura_texto = largura_pagina - (2 * margem_x)
+    pagina = None
+    y = topo
+
+    def nova_pagina():
+        nonlocal pagina, y
+        pagina = documento.new_page(width=largura_pagina, height=altura_pagina)
+        pagina.insert_text(
+            fitz.Point(margem_x, 30),
+            "RAIO-X PPP - PROBENEFÍCIO",
+            fontname="hebo",
+            fontsize=9,
+            color=(0.15, 0.25, 0.45),
+        )
+        pagina.draw_line(
+            fitz.Point(margem_x, 38),
+            fitz.Point(largura_pagina - margem_x, 38),
+            color=(0.65, 0.68, 0.72),
+            width=0.6,
+        )
+        y = topo
+
+    nova_pagina()
+    for linha_original in str(relatorio or "").splitlines():
+        linha = _texto_compativel_pdf(linha_original).strip()
+        nivel = 0
+        if linha.startswith("### "):
+            nivel, linha = 3, linha[4:]
+        elif linha.startswith("## "):
+            nivel, linha = 2, linha[3:]
+        elif linha.startswith("# "):
+            nivel, linha = 1, linha[2:]
+        linha = linha.replace("**", "")
+
+        if not linha:
+            y += 5
+            continue
+
+        if nivel == 1:
+            fonte, tamanho, entrelinha, espaco_antes = "hebo", 15, 19, 8
+        elif nivel == 2:
+            fonte, tamanho, entrelinha, espaco_antes = "hebo", 12, 16, 7
+        elif nivel == 3:
+            fonte, tamanho, entrelinha, espaco_antes = "hebo", 10.5, 14, 5
+        else:
+            fonte, tamanho, entrelinha, espaco_antes = "helv", 9.2, 12, 0
+
+        linhas_quebradas = _quebrar_linha_pdf(linha, largura_texto, fonte, tamanho)
+        altura_bloco = espaco_antes + entrelinha * len(linhas_quebradas)
+        if y + altura_bloco > altura_pagina - rodape:
+            nova_pagina()
+        y += espaco_antes
+        for trecho in linhas_quebradas:
+            pagina.insert_text(
+                fitz.Point(margem_x, y),
+                trecho,
+                fontname=fonte,
+                fontsize=tamanho,
+                color=(0, 0, 0),
+            )
+            y += entrelinha
+
+    total_paginas = documento.page_count
+    for indice, pagina_pdf in enumerate(documento, start=1):
+        pagina_pdf.insert_text(
+            fitz.Point(largura_pagina - margem_x - 55, altura_pagina - 22),
+            f"Página {indice} de {total_paginas}",
+            fontname="helv",
+            fontsize=8,
+            color=(0.35, 0.35, 0.35),
+        )
+    documento.set_metadata({
+        "title": "Raio-X do PPP - Parecer Técnico Previdenciário",
+        "author": "PróBenefício",
+        "subject": "Análise técnica de Perfil Profissiográfico Previdenciário",
+    })
+    pdf_bytes = documento.tobytes(garbage=4, deflate=True)
+    documento.close()
+    return pdf_bytes
+
+
+# ============================================================
 # INTERFACE STREAMLIT
 # ============================================================
 
@@ -6078,43 +6722,85 @@ with st.sidebar:
     if st.button("Limpar cache / Reprocessar OCR", use_container_width=True):
         st.cache_data.clear()
         st.session_state["ocr_reprocessar_versao"] += 1
+        for chave in list(st.session_state.keys()):
+            if str(chave).startswith("ppp_editor_") or chave in {
+                "ppp_modelo_editavel", "ppp_fonte_hash", "ppp_editor_geracao",
+                "ppp_texto_ocr_bruto",
+            }:
+                del st.session_state[chave]
         st.rerun()
     st.info("O sistema não armazena dados. A análise ocorre durante a sessão.")
 
 uploaded_file = st.file_uploader("Carregue o PPP em PDF", type=["pdf"])
 
-texto_manual = st.text_area("Ou cole manualmente o texto extraído do PPP", height=180)
+texto_manual = st.text_area("Ou cole o texto de um PPP quando não houver PDF", height=140)
 
-texto_final = ""
-
-if uploaded_file:
+texto_ocr_bruto = ""
+hash_fonte = ""
+if uploaded_file is not None:
+    bytes_pdf = uploaded_file.getvalue()
+    hash_fonte = hashlib.sha256(
+        bytes_pdf + str(st.session_state["ocr_reprocessar_versao"]).encode("utf-8")
+    ).hexdigest()
     with st.spinner("📄 Lendo PDF e extraindo texto..."):
         texto_bruto = extrair_texto_pdf(
             uploaded_file,
             versao_execucao=str(st.session_state["ocr_reprocessar_versao"]),
         )
-    with st.spinner("🔍 Preparando campos e placeholders..."):
-        # Etapa 1: preparação do bloco editável (pré-análise)
-        texto_final = preparar_texto_editavel(texto_bruto)
-    st.success(
-        "✅ PDF processado. Revise o texto abaixo e "
-        "preencha campos faltantes antes de gerar o Raio-X."
-    )
+    texto_ocr_bruto = preparar_texto_editavel(texto_bruto)
 elif texto_manual.strip():
-    # Etapa 1: preparação do bloco editável (pré-análise)
-    texto_final = preparar_texto_editavel(texto_manual)
+    hash_fonte = hashlib.sha256(texto_manual.encode("utf-8")).hexdigest()
+    texto_ocr_bruto = preparar_texto_editavel(texto_manual)
 
-if texto_final:
-    with st.expander("Ver texto extraído / editável", expanded=True):
-        st.info("Se algum campo não foi lido, preencha no bloco 'CAMPOS NÃO LIDOS PELO OCR' e clique novamente em Gerar Raio-X do PPP.")
-        texto_final = st.text_area("Texto base da análise", value=texto_final, height=420)
+if texto_ocr_bruto and st.session_state.get("ppp_fonte_hash") != hash_fonte:
+    with st.spinner("🔍 Organizando os Campos 1 a 18 para conferência..."):
+        st.session_state["ppp_modelo_editavel"] = criar_modelo_editavel_ppp(texto_ocr_bruto)
+    st.session_state["ppp_fonte_hash"] = hash_fonte
+    st.session_state["ppp_texto_ocr_bruto"] = texto_ocr_bruto
+    st.session_state["ppp_editor_geracao"] = st.session_state.get("ppp_editor_geracao", 0) + 1
 
-if st.button("🚀 Gerar Raio-X do PPP", use_container_width=True):
-    if not texto_final.strip():
+modelo_atual = None
+confirmado = False
+if st.session_state.get("ppp_modelo_editavel"):
+    st.success(
+        "PDF processado. Confira todos os campos antes da análise. "
+        "Campos vazios continuam disponíveis para preenchimento."
+    )
+    geracao = st.session_state.get("ppp_editor_geracao", 1)
+    modelo_atual = exibir_editor_campos_ppp(
+        st.session_state["ppp_modelo_editavel"], geracao
+    )
+
+    faltantes_editor = campos_nao_lidos_modelo(modelo_atual)
+    if faltantes_editor:
+        st.warning("CAMPOS NÃO LIDOS PELO OCR")
+        st.caption(
+            "Os itens abaixo permanecem editáveis nas caixas e tabelas acima. "
+            "Preencha somente quando puder confirmar o dado no PPP original."
+        )
+        st.code("\n".join(faltantes_editor), language=None)
+
+    with st.expander("Auditoria: visualizar OCR bruto (não utilizado diretamente no parecer)"):
+        st.text_area(
+            "Texto bruto do OCR",
+            value=st.session_state.get("ppp_texto_ocr_bruto", ""),
+            height=300,
+            disabled=True,
+        )
+
+    confirmado = st.checkbox(
+        "Confirmo que revisei os campos. A análise deve usar somente os valores acima.",
+        key=f"ppp_editor_{geracao}_confirmado",
+    )
+
+if st.button("🔄 Reanalisar PPP com campos revisados", use_container_width=True):
+    if modelo_atual is None:
         st.error("Envie um PDF ou cole o texto do PPP.")
+    elif not confirmado:
+        st.error("Confirme a revisão dos campos antes de gerar o parecer.")
     else:
-        # Etapa 2: geração do parecer sobre o texto editado
-        texto_para_analise = texto_para_analise_sem_diagnostico(texto_final)
+        # A partir deste ponto o OCR bruto é deliberadamente ignorado.
+        texto_para_analise = serializar_modelo_editavel_ppp(modelo_atual)
         relatorio, campos, agentes, epi, ltcat, classificacao = gerar_parecer(texto_para_analise, trf)
 
         _cnae_extraido = extrair_cnae(texto_para_analise)
@@ -6195,7 +6881,13 @@ if st.button("🚀 Gerar Raio-X do PPP", use_container_width=True):
         st.subheader("📄 Parecer técnico completo")
         st.text_area("Parecer para copiar", relatorio, height=650)
 
-        col_a, col_b = st.columns(2)
+        try:
+            _relatorio_pdf = gerar_pdf_parecer(relatorio)
+        except Exception as erro_pdf:
+            _relatorio_pdf = b""
+            st.warning(f"Não foi possível gerar o PDF do parecer: {erro_pdf}")
+
+        col_a, col_b, col_c = st.columns(3)
         with col_a:
             st.download_button(
                 "⬇️ Baixar parecer em TXT",
@@ -6213,3 +6905,12 @@ if st.button("🚀 Gerar Raio-X do PPP", use_container_width=True):
                 mime="text/markdown",
                 use_container_width=True
             )
+        with col_c:
+            if _relatorio_pdf:
+                st.download_button(
+                    "⬇️ Baixar parecer em PDF",
+                    data=_relatorio_pdf,
+                    file_name="raio_x_ppp_parecer.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
