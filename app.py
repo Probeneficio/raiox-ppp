@@ -876,7 +876,7 @@ def normalizar(texto):
     return texto
 
 
-OCR_PIPELINE_VERSION = "2026-06-27-adaptativo-v26-pendencias-contextuais"
+OCR_PIPELINE_VERSION = "2026-06-27-adaptativo-v27-interpretacao-tecnica"
 MARCADOR_METADADOS_OCR = "=== METADADOS INTERNOS DA EXTRAÇÃO OCR ==="
 MARCADOR_DIAGNOSTICO_INTERNO = "=== DIAGNÓSTICO INTERNO DO PIPELINE ==="
 
@@ -1645,6 +1645,10 @@ def ocr_soc_celulas_ppp(imagens):
                 crop = crop_relativo(img, (x1, y1 - 0.003, x2, y2 + 0.003))
                 whitelist = "0123456789,./" if numero == "15.8" else None
                 bruto = ocr_celula_simples(crop, psm=6, whitelist=whitelist)
+                if numero == "15.3":
+                    bruto_alternativo = ocr_celula_simples(crop, psm=11)
+                    if len(normalizar(bruto_alternativo)) > len(normalizar(bruto)):
+                        bruto = bruto_alternativo
                 validado = adicionar_ocr_soc_validado(
                     textos, rejeitados, numero, nome, linha, bruto
                 )
@@ -2975,6 +2979,13 @@ def inferir_tipo_agente_15(texto):
 def inferir_fator_risco_15(texto):
     bruto = re.sub(r"\s+", " ", str(texto or "")).strip(" -:|")
     t = normalizar(bruto)
+    if "fumos metalicos" in t or "fumo metalico" in t:
+        if "manganes" in t:
+            return "Fumos metálicos (manganês)"
+        if "silicio" in t:
+            return "Fumos metálicos (silício)"
+        if "ferro" in t:
+            return "Fumos metálicos (ferro)"
     mapa = [
         (["ruido previdenciario"], "Ruído previdenciário"),
         (["ruido trabalhista"], "Ruído trabalhista"),
@@ -2989,6 +3000,9 @@ def inferir_fator_risco_15(texto):
         (["hidrocarboneto"], "Hidrocarbonetos"),
         (["oleo mineral", "oleos minerais"], "Óleos minerais"),
         (["graxa", "lubrificante"], "Graxas/lubrificantes"),
+        (["fumos metalicos ferro", "fumo metalico ferro"], "Fumos metálicos (ferro)"),
+        (["fumos metalicos manganes", "fumo metalico manganes"], "Fumos metálicos (manganês)"),
+        (["fumos metalicos silicio", "fumo metalico silicio"], "Fumos metálicos (silício)"),
         (["fumos metalicos", "fumo metalico"], "Fumos metálicos"),
         (["chumbo"], "Chumbo"),
         (["manganes"], "Manganês"),
@@ -4043,16 +4057,23 @@ def normalizar_linha_15(dados):
         dados["15.6"] = "NA"
 
     if dados.get("15.4"):
-        m = re.search(r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?(?:\s*NEN)?", dados["15.4"], flags=re.IGNORECASE)
-        if m:
-            dados["15.4"] = m.group(0)
+        medicoes_db = re.findall(
+            r"\b\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A?\)?(?:\s*NEN)?"
+            r"(?:\s+em\s+\d{2}/\d{2}/\d{4})?",
+            dados["15.4"],
+            flags=re.IGNORECASE,
+        )
+        if medicoes_db:
+            dados["15.4"] = "; ".join(dict.fromkeys(
+                re.sub(r"\s+", " ", valor).strip() for valor in medicoes_db
+            ))
         elif re.search(r"\b(?:qualitativ[ao]|quantitativ[ao]|ND|ppm|mg/m)\b", dados["15.4"], flags=re.IGNORECASE):
             dados["15.4"] = re.sub(r"\s+", " ", dados["15.4"]).strip()
     texto_tecnica = " ".join(str(dados.get(k, "")) for k in ["15.4", "15.5", "15.6", "_linha_original"])
     if dados.get("15.5"):
         m = re.search(r"(?:Medi[cç\?].{0,4}o\s+de\s+NPS\s*-\s*)?(?:Decibel.{0,3}metro|Decibelimetro|Dos.{0,3}metro|NHO[-\s]*01|NHO\s*01|Fundacentro|NR[-\s]*15(?:\s*Anexo\s*\d+)?)", texto_tecnica, flags=re.IGNORECASE)
         if m:
-            dados["15.5"] = re.sub(r"\s+", " ", m.group(0)).strip()
+            dados["15.5"] = re.sub(r"\s+", " ", str(dados["15.5"])).strip()
     fator_norm = normalizar(str(dados.get("15.3", "")))
     tipo_norm = normalizar(str(dados.get("15.2", "")))
     eh_ruido = fator_ruido_15(dados.get("15.3", ""))
@@ -5418,38 +5439,74 @@ def analisar_agentes(texto):
     corpus_15 = corpus_agentes_campo15(texto)
     if "ausencia de riscos" in normalizar(corpus_15) and not re.search(r"ru[ií]do|vibra|hidrocarbon|fumos|poeira|silica|agro|virus|bacter|fung|hiv|hepatite", corpus_15, flags=re.IGNORECASE):
         return []
-    texto_norm = normalizar(corpus_15)
     agentes = []
     vistos = set()
-    bases_detectadas = set()
-
-    for rotulo in extrair_agentes_detectados_campo15(corpus_15):
+    for indice, linha in linhas_campo15_para_analise(texto).items():
+        rotulo = str(linha.get("15.3", "") or "").strip()
+        if not rotulo or valor_ausente_estrutural(rotulo):
+            continue
         chave_base = chave_agente_para_rotulo(rotulo)
         if not chave_base or chave_base not in AGENTES:
             continue
-        bases_detectadas.add(chave_base)
         item = montar_item_agente(chave_base, AGENTES[chave_base])
         item["agente"] = slug_agente(rotulo)
         item["agente_original"] = rotulo
-        item["enquadramento"] = f"Agente identificado no Campo 15 do PPP: {rotulo}. " + item.get("enquadramento", "")
-        chave_item = item["agente"]
+        item["linha"] = indice
+        item["periodo"] = str(linha.get("15.1", "") or "").strip()
+        item["intensidade"] = str(linha.get("15.4", "") or "").strip()
+        item["tecnica"] = str(linha.get("15.5", "") or "").strip()
+        item["epc"] = str(linha.get("15.6", "") or "").strip()
+        item["epi"] = str(linha.get("15.7", "") or "").strip()
+        item["ca"] = str(linha.get("15.8", "") or "").strip()
+        insuficiencias = []
+        if valor_nao_aplicavel_estrutural(item["intensidade"]):
+            insuficiencias.append("intensidade/concentração")
+        if valor_nao_aplicavel_estrutural(item["tecnica"]):
+            insuficiencias.append("metodologia")
+        item["insuficiencias"] = insuficiencias
+        item["situacao_tecnica"] = (
+            "DOCUMENTAÇÃO INSUFICIENTE" if insuficiencias else "PARÂMETROS TÉCNICOS INFORMADOS"
+        )
+        if insuficiencias:
+            item["enquadramento"] = (
+                f"Agente informado no PPP, porém sem {', '.join(insuficiencias)}. "
+                "A exposição não pode ser considerada tecnicamente caracterizada apenas com os dados apresentados."
+            )
+        else:
+            item["enquadramento"] = (
+                f"Agente informado no Campo 15 com parâmetros técnicos: {item['intensidade']}; "
+                f"metodologia: {item['tecnica']}. O potencial enquadramento depende da comparação com o "
+                "critério aplicável ao período e da conferência do PPP/LTCAT."
+            )
+        chave_item = (
+            normalizar(rotulo), normalizar(item["periodo"]),
+            normalizar(item["intensidade"]), normalizar(item["tecnica"]),
+        )
         if chave_item not in vistos:
             agentes.append(item)
             vistos.add(chave_item)
-
-    for chave, info in AGENTES.items():
-        if chave in bases_detectadas:
-            continue
-        if chave == "hidrocarbonetos" and "oleos_minerais" in bases_detectadas:
-            continue
-        termos_norm = [normalizar(t) for t in info.get("termos", [])]
-        if any(t in texto_norm for t in termos_norm):
-            item = montar_item_agente(chave, info)
-            if item["agente"] not in vistos:
-                agentes.append(item)
-                vistos.add(item["agente"])
-
     return agentes
+
+
+def analisar_suficiencia_tecnica_agentes(agentes):
+    falhas = []
+    for agente in agentes:
+        insuficiencias = agente.get("insuficiencias") or []
+        if not insuficiencias:
+            continue
+        nome = agente.get("agente_original") or agente.get("agente") or "Agente"
+        falhas.append({
+            "criticidade": "GRAVE",
+            "nome": f"Campo 15 — documentação insuficiente — {nome}",
+            "falha": "Ausência de " + " e de ".join(insuficiencias) + ".",
+            "analise": (
+                "O agente aparece no PPP, mas a exposição não está tecnicamente caracterizada "
+                "porque faltam parâmetros essenciais na mesma linha."
+            ),
+            "fundamento": agente.get("fundamento", ""),
+            "estrategia": "Conferir o PPP original e solicitar LTCAT ou avaliação técnica complementar.",
+        })
+    return falhas
 
 
 
@@ -5484,6 +5541,11 @@ def analisar_epi(texto, agentes):
         grupo = normalizar((agente_info or {}).get("grupo", "") or tipo)
         ponto = f"Linha {indice} do Campo 15 — {fator}"
 
+        if agente_info and agente_info.get("insuficiencias"):
+            # A linha já foi classificada como documentação insuficiente.
+            # Não discute neutralização por EPI antes de caracterizar a exposição.
+            continue
+
         if not epi or epi not in {"Sim", "Não", "NA"}:
             conclusoes.append({
                 "criticidade": "GRAVE",
@@ -5517,16 +5579,24 @@ def analisar_epi(texto, agentes):
                 "estrategia": "Conferir CA, campo 15.9, FISPQ e LTCAT. Se houver omissão, impugnar a neutralização."
             })
         elif "fisic" in grupo:
-            conclusoes.append({
-                "criticidade": "MODERADA",
-                "ponto": ponto,
-                "analise": (
-                    "Para agente físico, a eficácia do EPI depende do agente específico. Em ruído acima do limite, "
-                    "o EPI eficaz não descaracteriza automaticamente a especialidade."
-                ),
-                "fundamento": BASE_LEGAL["ruido"]["tema_555_stf"] + " " + BASE_LEGAL["epi"]["tema_213_tnu"],
-                "estrategia": "Conferir agente físico específico, metodologia, intensidade e eventual aplicação do Tema 555/STF."
-            })
+            if fator_ruido_15(fator):
+                conclusoes.append({
+                    "criticidade": "MODERADA",
+                    "ponto": ponto,
+                    "analise": (
+                        "Para ruído acima do limite, o EPI eficaz não descaracteriza automaticamente a especialidade."
+                    ),
+                    "fundamento": BASE_LEGAL["ruido"]["tema_555_stf"] + " " + BASE_LEGAL["epi"]["tema_213_tnu"],
+                    "estrategia": "Conferir metodologia, intensidade, período e documentos de fornecimento do EPI."
+                })
+            else:
+                conclusoes.append({
+                    "criticidade": "MODERADA",
+                    "ponto": ponto,
+                    "analise": "A eficácia do EPI deve ser examinada conforme o agente físico específico e os dados técnicos da linha.",
+                    "fundamento": BASE_LEGAL["epi"]["tema_213_tnu"] + " " + BASE_LEGAL["epi"]["nr06"],
+                    "estrategia": "Conferir metodologia, intensidade, EPC, EPI e CA sem aplicar fundamento específico do ruído."
+                })
         if epi == "Sim" and not valor_nao_aplicavel_estrutural(ca) and not re.fullmatch(r"\d{3,8}(?:\s*[,/]\s*\d{3,8})*", ca):
             conclusoes.append({
                 "criticidade": "GRAVE",
@@ -5642,6 +5712,7 @@ def gerar_parecer(texto, trf):
 
     campos = analisar_campos(texto)
     agentes = analisar_agentes(texto)
+    insuficiencias_agentes = analisar_suficiencia_tecnica_agentes(agentes)
     epi = analisar_epi(texto, agentes)
     ltcat = analisar_ltcat_responsavel(texto)
 
@@ -5652,6 +5723,7 @@ def gerar_parecer(texto, trf):
     campos_tecnicos = [c for c in campos if not campo_administrativo_informativo(c)]
 
     falhas = [c for c in campos_tecnicos if c["criticidade"] in ["CRÍTICA", "GRAVE", "MODERADA"]]
+    falhas += insuficiencias_agentes
     falhas += epi
     falhas += ltcat
 
@@ -5711,7 +5783,15 @@ def gerar_parecer(texto, trf):
     linhas.append("## 4. ANÁLISE DOS AGENTES NOCIVOS x DECRETO 3.048/99 / NR-15")
     if agentes:
         for a in agentes:
-            linhas.append(f"### {a['agente'].upper()} — {a['grupo']}")
+            nome_agente = a.get("agente_original") or a["agente"]
+            linhas.append(f"### {nome_agente.upper()} — {a['grupo']}")
+            linhas.append(f"- Situação técnica: {a.get('situacao_tecnica', 'AGENTE INFORMADO NO PPP')}")
+            linhas.append(f"- Período: {a.get('periodo') or 'não informado'}")
+            linhas.append(f"- Intensidade/concentração: {a.get('intensidade') or 'não informada'}")
+            linhas.append(f"- Técnica utilizada: {a.get('tecnica') or 'não informada'}")
+            linhas.append(f"- EPC: {a.get('epc') or 'não informado'}")
+            linhas.append(f"- EPI: {a.get('epi') or 'não informado'}")
+            linhas.append(f"- CA: {a.get('ca') or 'não informado'}")
             linhas.append(f"- Norma/Anexo: {a['norma']}")
             linhas.append(f"- Limite/Critério: {a['limite']}")
             linhas.append(f"- Metodologia esperada: {a['metodologia']}")
@@ -5722,7 +5802,7 @@ def gerar_parecer(texto, trf):
         linhas.append("- Nenhum agente nocivo foi identificado automaticamente. Recomenda-se revisar OCR ou preencher manualmente.")
     linhas.append("")
 
-    linhas.append("## 5. EFICÁCIA DO EPI — TEMA 555/STF, TEMA 213/TNU E IRDR 15/TRF4")
+    linhas.append("## 5. EFICÁCIA DO EPI — FUNDAMENTAÇÃO CONFORME O AGENTE")
     if epi:
         for e in epi:
             linhas.append(f"- {e['criticidade']} — {e['ponto']}: {e['analise']}")
@@ -6465,6 +6545,46 @@ def criar_modelo_editavel_ppp(texto_ocr):
                 for codigo in ("15.4", "15.5", "15.8"):
                     if not str(registro.get(codigo, "") or "").strip():
                         registro[codigo] = "NA"
+
+        # O ruído pode ocupar duas ou mais sublinhas na mesma célula visual.
+        # Preserva todas as medições e respectivas datas em um único registro.
+        medicoes_ruido = []
+        for valor, data in re.findall(
+            r"(\d{2,3}(?:[,.]\d+)?\s*dB\s*\(?A\)?)\s*(?:\(|em\s+)?"
+            r"(\d{2}/\d{2}/\d{4})?",
+            texto_ocr,
+            flags=re.IGNORECASE,
+        ):
+            medicao = re.sub(r"\s+", " ", valor).strip()
+            if data:
+                medicao += f" em {data}"
+            if medicao not in medicoes_ruido:
+                medicoes_ruido.append(medicao)
+        for registro in modelo["tabelas"].get("15", []):
+            if fator_ruido_15(registro.get("15.3", "")):
+                if medicoes_ruido:
+                    registro["15.4"] = "; ".join(medicoes_ruido)
+                tecnica_partes = []
+                tecnica_atual = str(registro.get("15.5", "") or "").strip()
+                if tecnica_atual and not valor_nao_aplicavel_estrutural(tecnica_atual):
+                    tecnica_partes.append(tecnica_atual)
+                if re.search(r"NHO\s*[-–]?\s*0?1", texto_ocr, flags=re.IGNORECASE):
+                    tecnica_partes.append("NHO-01")
+                if re.search(r"NR\s*[-–]?\s*15.{0,30}anexo\s*0?1", texto_ocr, flags=re.IGNORECASE | re.DOTALL):
+                    tecnica_partes.append("NR-15, Anexo 01")
+                registro["15.5"] = " - ".join(dict.fromkeys(tecnica_partes)) or tecnica_atual
+
+        especificos_fumos = [
+            agente for agente in extrair_agentes_detectados_campo15(texto_ocr)
+            if normalizar(agente).startswith("fumos metalicos (")
+        ]
+        genericos_fumos = [
+            registro for registro in modelo["tabelas"].get("15", [])
+            if normalizar(registro.get("15.3", "")) == "fumos metalicos"
+        ]
+        if especificos_fumos and len(genericos_fumos) >= len(especificos_fumos):
+            for registro, agente in zip(genericos_fumos, especificos_fumos):
+                registro["15.3"] = agente
 
     for registro in modelo["tabelas"].get("18", []):
         nome = str(registro.get("18.2", "") or "").strip()
